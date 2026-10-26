@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore ReportStudio.sln
+
+      - name: Build (warnings are errors)
+        run: dotnet build ReportStudio.sln -c Release --no-restore -warnaserror
+
+      - name: Test
+        run: dotnet test ReportStudio.sln -c Release --no-build --logger "trx;LogFileName=results.trx" --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults
+
+      # A golden file that did not exist yet is created by the tests. Download this artifact and commit the files.
+      - name: Upload golden files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: golden-files
+          path: |
+            tests/ReportStudio.Tests/Golden
+            tests/ReportStudio.Export.Tests/Golden
+          if-no-files-found: ignore
+
+      - name: Publish Designer and Viewer
+        run: |
+          dotnet publish src/ReportStudio.Designer -c Release --no-build -o out/designer
+          dotnet publish src/ReportStudio.Viewer -c Release --no-build -o out/viewer
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: reportstudio-binaries
+          path: out

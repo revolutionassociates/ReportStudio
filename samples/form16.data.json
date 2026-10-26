@@ -1,0 +1,53 @@
+[
+  {
+    "EmpCode": "E001",
+    "EmpName": "Anita Sharma",
+    "PAN": "ABCPS1234A",
+    "GrossSalary": 1620000.0,
+    "ExemptAllowances": 240000.0,
+    "StandardDeduction": 75000.0,
+    "ProfessionalTax": 2400.0,
+    "IncomeFromSalary": 1302600.0,
+    "ChapterVIADeductions": 150000.0,
+    "TaxableIncome": 1152600.0,
+    "TaxOnIncome": 52000.0,
+    "Rebate": 0.0,
+    "Cess": 2080.0,
+    "TotalTax": 54080.0,
+    "TDSDeducted": 54080.0
+  },
+  {
+    "EmpCode": "E002",
+    "EmpName": "Rahul Verma",
+    "PAN": "BCDPV2345B",
+    "GrossSalary": 240000.0,
+    "ExemptAllowances": 0.0,
+    "StandardDeduction": 75000.0,
+    "ProfessionalTax": 2400.0,
+    "IncomeFromSalary": 162600.0,
+    "ChapterVIADeductions": 0.0,
+    "TaxableIncome": 162600.0,
+    "TaxOnIncome": 0.0,
+    "Rebate": 0.0,
+    "Cess": 0.0,
+    "TotalTax": 0.0,
+    "TDSDeducted": 0.0
+  },
+  {
+    "EmpCode": "E003",
+    "EmpName": "Meera Iyer",
+    "PAN": "CDEPI3456C",
+    "GrossSalary": 12600000.0,
+    "ExemptAllowances": 0.0,
+    "StandardDeduction": 75000.0,
+    "ProfessionalTax": 2400.0,
+    "IncomeFromSalary": 12522600.0,
+    "ChapterVIADeductions": 150000.0,
+    "TaxableIncome": 12372600.0,
+    "TaxOnIncome": 3480000.0,
+    "Rebate": 0.0,
+    "Cess": 139200.0,
+    "TotalTax": 3619200.0,
+    "TDSDeducted": 3619200.0
+  }
+]

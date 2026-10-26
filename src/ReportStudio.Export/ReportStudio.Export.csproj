@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ReportStudio.Export</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+    <PackageReference Include="PDFsharp" Version="6.5.0" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.14" />
+    <PackageReference Include="System.IO.Packaging" Version="10.0.14" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ReportStudio.Core\ReportStudio.Core.csproj" />
+  </ItemGroup>
+
+  <!-- Fonts in <repo>/fonts (Ubuntu-Regular.ttf etc.) are copied to every app's "Fonts" folder. -->
+  <ItemGroup>
+    <Content Include="..\..\fonts\*.ttf" Link="Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
