@@ -1,8 +1,9 @@
-using System.Drawing.Drawing2D;
-using System.Runtime.CompilerServices;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
 using ReportStudio.Export;
+using System.ComponentModel;
+using System.Drawing.Drawing2D;
+using System.Runtime.CompilerServices;
 
 namespace ReportStudio.Designer;
 
@@ -52,8 +53,12 @@ public sealed class DesignCanvas : Control
     private readonly Stack<string> _undo = new();
     private readonly Stack<string> _redo = new();
     private string _lastSnapshot = "";
-
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public DesignTool Tool { get; set; } = DesignTool.Select;
+
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool SnapToGrid { get; set; } = true;
 
     public event EventHandler? SelectionChanged;
@@ -73,6 +78,7 @@ public sealed class DesignCanvas : Control
 
     // ================================================================ public API
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public ReportDefinition Definition
     {
         get => _def;
