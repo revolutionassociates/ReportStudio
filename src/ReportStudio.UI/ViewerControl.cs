@@ -1,3 +1,4 @@
+using System.Drawing;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
 using ReportStudio.Export;

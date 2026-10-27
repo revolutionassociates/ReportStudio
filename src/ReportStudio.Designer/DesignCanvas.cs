@@ -1,13 +1,12 @@
+using System.Drawing.Drawing2D;
+using System.Runtime.CompilerServices;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
 using ReportStudio.Export;
-using System.ComponentModel;
-using System.Drawing.Drawing2D;
-using System.Runtime.CompilerServices;
 
 namespace ReportStudio.Designer;
 
-public enum DesignTool { Select, Text, Line, Rectangle, Image }
+public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab }
 public enum AlignKind { Left, Right, Top, Bottom, SameWidth, SameHeight }
 
 /// <summary>
@@ -46,6 +45,7 @@ public sealed class DesignCanvas : Control
     private Band? _dragBand;
     private double _origBandHeight;
     private Dictionary<ReportItem, (double X, double Y, double W, double H)> _orig = new();
+    private Dictionary<ReportItem, Band?> _origBand = new();   // where each dragged item started (it may change band while dragging)
     private BandBox? _createBox;
     private Rectangle _createRect;
 
@@ -53,12 +53,8 @@ public sealed class DesignCanvas : Control
     private readonly Stack<string> _undo = new();
     private readonly Stack<string> _redo = new();
     private string _lastSnapshot = "";
-    [Browsable(false)]
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-    public DesignTool Tool { get; set; } = DesignTool.Select;
 
-    [Browsable(false)]
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public DesignTool Tool { get; set; } = DesignTool.Select;
     public bool SnapToGrid { get; set; } = true;
 
     public event EventHandler? SelectionChanged;
@@ -66,6 +62,58 @@ public sealed class DesignCanvas : Control
     public event EventHandler? DefinitionReplaced;
     public event EventHandler? ToolUsed;
     public event Action<ReportItem>? ImageRequested;
+
+    /// <summary>The mouse position in canvas coordinates, or null when it has left the canvas (the rulers follow it).</summary>
+    public event Action<Point?>? PointerMoved;
+
+    // ---- geometry the rulers draw from (canvas pixels @96dpi) ----
+    // These are in screen pixels (already multiplied by Zoom), since that is what the rulers draw.
+    public int PageOrigin => (int)Math.Round(GutterLeft * _zoom);
+    public double PageWidth => _def.Page.Width * _zoom;
+    public double MarginLeft => _def.Page.MarginLeft * _zoom;
+    public double MarginRight => _def.Page.MarginRight * _zoom;
+
+    /// <summary>Top and height of every band's body, so the vertical ruler can restart at 0 in each band.</summary>
+    public IReadOnlyList<(int Top, int Height)> BandSpans =>
+        _boxes.Select(b => ((int)Math.Round(b.BodyTop * _zoom), (int)Math.Round(b.BodyHeight * _zoom))).ToList();
+
+    // ---- zoom ----
+    private static readonly double[] ZoomSteps = { 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4 };
+    private double _zoom = 1.0;
+
+    public event EventHandler? ZoomChanged;
+
+    /// <summary>Display scale of the design surface (1 = 100%). Everything inside the canvas stays in report pixels.</summary>
+    public double Zoom
+    {
+        get => _zoom;
+        set
+        {
+            value = Math.Clamp(Math.Round(value, 2), ZoomSteps[0], ZoomSteps[^1]);
+            if (value == _zoom) return;
+            _zoom = value;
+            RecalcLayout();
+            ZoomChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public void ZoomIn() => Zoom = ZoomSteps.FirstOrDefault(s => s > _zoom + 0.001, ZoomSteps[^1]);
+    public void ZoomOut() => Zoom = ZoomSteps.LastOrDefault(s => s < _zoom - 0.001, ZoomSteps[0]);
+
+    /// <summary>Mouse events arrive in screen pixels; the rest of the canvas works in report pixels.</summary>
+    private MouseEventArgs ToDesign(MouseEventArgs e) =>
+        new(e.Button, e.Clicks, (int)Math.Round(e.X / _zoom), (int)Math.Round(e.Y / _zoom), e.Delta);
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        if ((ModifierKeys & Keys.Control) != 0)
+        {
+            if (e.Delta > 0) ZoomIn(); else if (e.Delta < 0) ZoomOut();
+            if (e is HandledMouseEventArgs handled) handled.Handled = true;   // do not also scroll the page
+            return;
+        }
+        base.OnMouseWheel(e);
+    }
 
     public DesignCanvas()
     {
@@ -78,7 +126,6 @@ public sealed class DesignCanvas : Control
 
     // ================================================================ public API
 
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public ReportDefinition Definition
     {
         get => _def;
@@ -282,7 +329,8 @@ public sealed class DesignCanvas : Control
             _boxes.Add(new BandBox { Band = band, HeaderTop = y, BodyTop = y + BandHeaderHeight, BodyHeight = h });
             y += BandHeaderHeight + h;
         }
-        Size = new Size(GutterLeft + (int)_def.Page.Width + 24, y + 48);
+        Size = new Size((int)Math.Ceiling((GutterLeft + (int)_def.Page.Width + 24) * _zoom),
+                        (int)Math.Ceiling((y + 48) * _zoom));
         Invalidate();
     }
 
@@ -309,6 +357,7 @@ public sealed class DesignCanvas : Control
         var g = e.Graphics;
         g.Clear(BackColor);
         g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.ScaleTransform((float)_zoom, (float)_zoom);   // everything below is drawn in report pixels
 
         int pageW = (int)_def.Page.Width;
         int totalH = _boxes.Count == 0 ? Height : _boxes[^1].BodyBottom;
@@ -364,9 +413,24 @@ public sealed class DesignCanvas : Control
             HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
             ForeColor = item.ForeColor, BackColor = item.BackColor,
             BorderColor = item.BorderColor, BorderWidth = item.BorderWidth,
-            Image = DecodeImage(item)
+            Image = DecodeImage(item),
+            BarcodeType = item.BarcodeType, QrLevel = item.QrLevel
         };
-        GdiPageRenderer.DrawItem(g, ri);
+        // A barcode / QR value written as an expression ({EmpCode}) has no value at design time: show a sample.
+        if (item.Kind == ItemKind.Barcode && item.Text.Contains('{')) ri.Text = "1234567890";
+        if (item.Kind == ItemKind.QrCode && item.Text.Contains('{')) ri.Text = "https://example.com";
+        if (item.Kind is ItemKind.SubReport or ItemKind.CrossTab)
+        {
+            // Their content is only known at run time: show a labelled placeholder.
+            using var tint = new SolidBrush(Color.FromArgb(40, 0, 120, 215));
+            g.FillRectangle(tint, r.X, r.Y, Math.Max(1, r.Width), Math.Max(1, r.Height));
+            using var f = new Font("Segoe UI", 8f, FontStyle.Italic);
+            var caption = item.Kind == ItemKind.CrossTab
+                ? "[Cross-tab: " + (string.IsNullOrWhiteSpace(item.CrossRows) ? "(set rows)" : item.CrossRows + " x " + item.CrossColumns) + "]"
+                : "[Sub-report: " + (string.IsNullOrWhiteSpace(item.SubReportPath) ? "(choose a report)" : item.SubReportPath) + "]";
+            g.DrawString(caption, f, Brushes.DimGray, r.X + 2, r.Y + 2);
+        }
+        else GdiPageRenderer.DrawItem(g, ri);
 
         // faint outline so empty / transparent elements stay visible and grabbable
         using (var outline = new Pen(Color.FromArgb(selected ? 0 : 60, 0, 120, 215)) { DashStyle = DashStyle.Dot })
@@ -421,6 +485,7 @@ public sealed class DesignCanvas : Control
     protected override void OnMouseDown(MouseEventArgs e)
     {
         base.OnMouseDown(e);
+        e = ToDesign(e);
         Focus();
         if (e.Button != MouseButtons.Left) return;
         _start = e.Location;
@@ -479,6 +544,7 @@ public sealed class DesignCanvas : Control
             {
                 _drag = Drag.Move;
                 _orig = _selection.ToDictionary(i => i, i => (i.X, i.Y, i.Width, i.Height));
+                _origBand = _selection.ToDictionary(i => i, i => FindBand(i));
             }
             Invalidate();
             SelectionChanged?.Invoke(this, EventArgs.Empty);
@@ -496,9 +562,17 @@ public sealed class DesignCanvas : Control
         }
     }
 
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        PointerMoved?.Invoke(null);
+    }
+
     protected override void OnMouseMove(MouseEventArgs e)
     {
         base.OnMouseMove(e);
+        PointerMoved?.Invoke(e.Location);   // the rulers want screen pixels
+        e = ToDesign(e);
 
         if (_drag == Drag.None) { UpdateCursor(e.Location); return; }
 
@@ -507,16 +581,38 @@ public sealed class DesignCanvas : Control
         switch (_drag)
         {
             case Drag.Move:
+            {
+                // The band under the mouse takes the selection; outside every band the items stay where they are.
+                var target = BoxAt(e.Location)?.Band;
                 foreach (var it in _selection)
                 {
                     var o = _orig[it];
-                    var band = FindBand(it);
+                    var current = FindBand(it);
+                    var dest = target ?? current;
+                    var destBox = dest == null ? null : BoxOf(dest);
+                    var homeBand = _origBand.TryGetValue(it, out var hb) ? hb : null;
+                    var homeBox = homeBand == null ? null : BoxOf(homeBand);
+
                     double maxX = Math.Max(0, _def.Page.ContentWidth - it.Width);
-                    double maxY = band == null ? 1e6 : Math.Max(0, band.Height - it.Height);
                     it.X = Math.Clamp(Snap(o.X + dx), 0, maxX);
-                    it.Y = Math.Clamp(Snap(o.Y + dy), 0, maxY);
+
+                    if (dest == null || destBox == null || homeBox == null)
+                    {
+                        it.Y = Math.Clamp(Snap(o.Y + dy), 0, 1e6);
+                        continue;
+                    }
+
+                    if (!ReferenceEquals(dest, current))
+                    {
+                        current?.Items.Remove(it);
+                        dest.Items.Add(it);
+                    }
+                    // keep the item's place on the page: its old canvas position plus the mouse movement
+                    double maxY = Math.Max(0, dest.Height - it.Height);
+                    it.Y = Math.Clamp(Snap(homeBox.BodyTop + o.Y + dy - destBox.BodyTop), 0, maxY);
                 }
                 break;
+            }
 
             case Drag.Resize:
                 ApplyResize(dx, dy);
@@ -542,6 +638,7 @@ public sealed class DesignCanvas : Control
     protected override void OnMouseUp(MouseEventArgs e)
     {
         base.OnMouseUp(e);
+        e = ToDesign(e);
         var drag = _drag;
         _drag = Drag.None;
 
@@ -558,13 +655,18 @@ public sealed class DesignCanvas : Control
                 DesignTool.Line => ItemKind.Line,
                 DesignTool.Rectangle => ItemKind.Rectangle,
                 DesignTool.Image => ItemKind.Image,
+                DesignTool.Barcode => ItemKind.Barcode,
+                DesignTool.QrCode => ItemKind.QrCode,
+                DesignTool.SubReport => ItemKind.SubReport,
+                DesignTool.CrossTab => ItemKind.CrossTab,
                 _ => ItemKind.Text
             };
-            if (w < 8) w = kind == ItemKind.Line ? 120 : 100;
-            if (h < 8 && kind != ItemKind.Line) h = kind == ItemKind.Image ? 60 : 20;
+            if (w < 8) w = kind == ItemKind.Line ? 120 : kind == ItemKind.Barcode ? 160 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 300 : kind == ItemKind.CrossTab ? 400 : 100;
+            if (h < 8 && kind != ItemKind.Line)
+                h = kind == ItemKind.Image ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : 20;
 
             var item = AddItem(kind, box.Band, Math.Max(0, Snap(x)), Math.Max(0, Snap(y)), Snap(w), Snap(h),
-                kind == ItemKind.Text ? "Text" : "");
+                kind == ItemKind.Text ? "Text" : kind == ItemKind.Barcode ? "1234567890" : kind == ItemKind.QrCode ? "https://example.com" : "");
 
             Tool = DesignTool.Select;
             ToolUsed?.Invoke(this, EventArgs.Empty);

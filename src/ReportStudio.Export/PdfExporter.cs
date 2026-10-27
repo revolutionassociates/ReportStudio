@@ -1,6 +1,7 @@
 using PdfSharp.Drawing;
 using PdfSharp.Fonts;
 using PdfSharp.Pdf;
+using ReportStudio.Core.Barcodes;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
 
@@ -40,7 +41,7 @@ public static class PdfExporter
         foreach (var page in report.Pages)
         {
             var p = doc.AddPage();
-            p.Width = new XUnitPt(page.Width * PxToPt);
+            p.Width = new XUnitPt(page.Width * PxToPt);      // doubles convert implicitly to PDFsharp's unit type
             p.Height = new XUnitPt(page.Height * PxToPt);
             using var gfx = XGraphics.FromPdfPage(p);
             gfx.ScaleTransform(PxToPt);          // draw in report pixels
@@ -72,6 +73,26 @@ public static class PdfExporter
             case ItemKind.Image:
                 DrawImage(g, it, rect);
                 break;
+            case ItemKind.QrCode:
+            {
+                if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
+                var cells = QrLayout.Rectangles(it.Text, it.QrLevel, it.Width, it.Height);
+                if (cells.Count == 0) break;
+
+                // One filled path so viewers do not show hairline gaps between modules.
+                var path = new XGraphicsPath { FillMode = XFillMode.Winding };
+                foreach (var (x, y, w, h) in cells) path.AddRectangle(new XRect(it.X + x, it.Y + y, w, h));
+                g.DrawPath(new XSolidBrush(ToX(ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black)), path);
+                break;
+            }
+            case ItemKind.Barcode:
+            {
+                if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
+                var ink = new XSolidBrush(ToX(ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black));
+                foreach (var (x, w) in BarcodeLayout.Bars(it.BarcodeType, it.Text, it.Width))
+                    g.DrawRectangle(ink, it.X + x, it.Y, w, it.Height);
+                break;
+            }
             case ItemKind.Text:
                 if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
                 DrawText(g, it, rect);

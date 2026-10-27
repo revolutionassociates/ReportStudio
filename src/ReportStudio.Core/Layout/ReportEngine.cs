@@ -1,4 +1,5 @@
 using System.Globalization;
+using ReportStudio.Core.Barcodes;
 using ReportStudio.Core.Data;
 using ReportStudio.Core.Expressions;
 using ReportStudio.Core.Model;
@@ -16,6 +17,15 @@ public class ReportOptions
     /// <summary>Supply rows directly (tests, other data sources) instead of querying the report's data source.</summary>
     public List<Row>? Rows { get; set; }
     public DateTime? Now { get; set; }
+
+    /// <summary>Sub-reports the host registered by name (a sub-report item's path may be one of these names).</summary>
+    public IDictionary<string, ReportDefinition>? SubReports { get; set; }
+
+    /// <summary>Named row sets for sub-reports, linked to the parent row by a key field.</summary>
+    public IDictionary<string, List<Dictionary<string, object?>>>? DataSets { get; set; }
+
+    /// <summary>How many sub-reports deep this run is (set by the engine).</summary>
+    internal int SubReportDepth { get; set; }
 }
 
 /// <summary>
@@ -54,6 +64,7 @@ public static class ReportEngine
         var copy = new ReportOptions
         {
             Culture = o.Culture, BaseDirectory = o.BaseDirectory, Measurer = o.Measurer, Now = o.Now,
+            SubReports = o.SubReports, DataSets = o.DataSets, SubReportDepth = o.SubReportDepth,
             Rows = rows.Select(ToRow).ToList()
         };
         return Run(def, parameterValues, copy);
@@ -318,11 +329,382 @@ public static class ReportEngine
                 {
                     r.Image = LoadImage(item, ctx);
                 }
+                else if (item.Kind == ItemKind.Barcode)
+                {
+                    PlaceBarcode(item, r, ctx, result);
+                }
+                else if (item.Kind == ItemKind.QrCode)
+                {
+                    PlaceQr(item, r, ctx);
+                }
+                else if (item.Kind == ItemKind.CrossTab)
+                {
+                    double used = PlaceCrossTab(item, r, ctx, scope, result);
+                    height = Math.Max(height, item.Y + Math.Max(item.Height, used));
+                    continue;
+                }
+                else if (item.Kind == ItemKind.SubReport)
+                {
+                    // The child's own items are added in place of the box; the band grows to fit them.
+                    double used = PlaceSubReport(item, r, ctx, row, result);
+                    height = Math.Max(height, item.Y + Math.Max(item.Height, used));
+                    continue;
+                }
 
-                height = Math.Max(height, item.Y + r.Height);
+                // a barcode's box keeps its designed height even though its bars are shorter than the caption leaves room for
+                height = Math.Max(height, item.Y + (item.Kind == ItemKind.Barcode ? item.Height : r.Height));
                 result.Add(r);
             }
             return result;
+        }
+
+        /// <summary>
+        /// Builds a cross-tab from the rows in scope as a grid of Text items (so every export carries it):
+        /// a header row, one row per distinct row value, and optionally a Total column and Total row.
+        /// Returns the height used.
+        /// </summary>
+        private double PlaceCrossTab(ReportItem item, RenderedItem box, EvalContext ctx, List<Row> scope, List<RenderedItem> output)
+        {
+            var label = string.IsNullOrWhiteSpace(item.Name) ? "cross-tab" : item.Name;
+            if (string.IsNullOrWhiteSpace(item.CrossRows) || string.IsNullOrWhiteSpace(item.CrossColumns) ||
+                (item.CrossAggregate != CrossAggregate.Count && string.IsNullOrWhiteSpace(item.CrossValue)))
+            {
+                Warn($"Cross-tab '{label}': rows, columns and value must all be set.");
+                return 0;
+            }
+
+            // one entry per source row: (row key, column key, number)
+            var cells = new List<(object? R, object? C, decimal V)>();
+            try
+            {
+                foreach (var source in scope)
+                {
+                    var rc = Ctx(source, scope);
+                    var rk = Expr.Evaluate(item.CrossRows, rc);
+                    var ck = Expr.Evaluate(item.CrossColumns, rc);
+                    decimal v = 1;
+                    if (item.CrossAggregate != CrossAggregate.Count)
+                    {
+                        var raw = Expr.Evaluate(item.CrossValue, rc);
+                        if (raw == null) continue;                    // nothing to add for this row
+                        if (raw is not decimal d)
+                        {
+                            Warn($"Cross-tab '{label}': the value '{item.CrossValue}' is not a number.");
+                            return 0;
+                        }
+                        v = d;
+                    }
+                    cells.Add((rk, ck, v));
+                }
+            }
+            catch (ExpressionException ex)
+            {
+                Warn($"Cross-tab '{label}': {ex.Message}");
+                return 0;
+            }
+
+            var cmp = Comparer<object?>.Create(Expr.Compare);
+            var rowKeys = DistinctSorted(cells.Select(c => c.R), cmp);
+            var colKeys = DistinctSorted(cells.Select(c => c.C), cmp);
+            if (rowKeys.Count == 0 || colKeys.Count == 0) return 0;
+
+            bool totals = item.CrossTotals;
+            int columnCount = colKeys.Count + (totals ? 1 : 0);
+            double labelWidth = Math.Min(item.CrossLabelWidth, item.Width / 2);
+            double colWidth = Math.Max(20, (item.Width - labelWidth) / columnCount);
+            double rowHeight = Math.Max(10, item.CrossRowHeight);
+            string numberFormat = string.IsNullOrEmpty(item.Format)
+                ? (item.CrossAggregate == CrossAggregate.Count ? "N0" : "N2") : item.Format;
+
+            string Summary(IEnumerable<decimal> values)
+            {
+                var list = values.ToList();
+                if (list.Count == 0) return "";
+                decimal result = item.CrossAggregate switch
+                {
+                    CrossAggregate.Count => list.Count,
+                    CrossAggregate.Average => list.Average(),
+                    CrossAggregate.Min => list.Min(),
+                    CrossAggregate.Max => list.Max(),
+                    _ => list.Sum()
+                };
+                return result.ToString(numberFormat, _opt.Culture);
+            }
+
+            RenderedItem Cell(double x, double y, double w, string text, bool header, bool right)
+            {
+                var ri = new RenderedItem
+                {
+                    Kind = ItemKind.Text, X = box.X + x, Y = item.Y + y, Width = w, Height = rowHeight, Text = text,
+                    FontFamily = item.FontFamily, FontSize = item.FontSize, Bold = header || item.Bold, Italic = item.Italic,
+                    HAlign = right ? HAlign.Right : HAlign.Left, VAlign = VAlign.Middle, WordWrap = false,
+                    ForeColor = item.ForeColor,
+                    BackColor = header ? (string.IsNullOrEmpty(item.BackColor) ? "#E5E7EB" : item.BackColor) : "",
+                    BorderColor = string.IsNullOrEmpty(item.BorderColor) ? "#9CA3AF" : item.BorderColor,
+                    BorderWidth = item.BorderWidth > 0 ? item.BorderWidth : 1
+                };
+                output.Add(ri);
+                return ri;
+            }
+
+            string Key(object? k) => Expr.Format(k, null, _opt.Culture);
+
+            // header row
+            Cell(0, 0, labelWidth, item.CrossCorner, header: true, right: false);
+            for (int c = 0; c < colKeys.Count; c++)
+                Cell(labelWidth + c * colWidth, 0, colWidth, Key(colKeys[c]), header: true, right: true);
+            if (totals) Cell(labelWidth + colKeys.Count * colWidth, 0, colWidth, "Total", header: true, right: true);
+
+            // body rows
+            for (int r = 0; r < rowKeys.Count; r++)
+            {
+                double y = (r + 1) * rowHeight;
+                var inRow = cells.Where(x => Expr.Compare(x.R, rowKeys[r]) == 0).ToList();
+                Cell(0, y, labelWidth, Key(rowKeys[r]), header: true, right: false);
+                for (int c = 0; c < colKeys.Count; c++)
+                    Cell(labelWidth + c * colWidth, y, colWidth,
+                        Summary(inRow.Where(x => Expr.Compare(x.C, colKeys[c]) == 0).Select(x => x.V)), header: false, right: true);
+                if (totals)
+                    Cell(labelWidth + colKeys.Count * colWidth, y, colWidth, Summary(inRow.Select(x => x.V)), header: true, right: true);
+            }
+
+            // total row
+            double rows = rowKeys.Count + 1;
+            if (totals)
+            {
+                double y = rows * rowHeight;
+                Cell(0, y, labelWidth, "Total", header: true, right: false);
+                for (int c = 0; c < colKeys.Count; c++)
+                    Cell(labelWidth + c * colWidth, y, colWidth,
+                        Summary(cells.Where(x => Expr.Compare(x.C, colKeys[c]) == 0).Select(x => x.V)), header: true, right: true);
+                Cell(labelWidth + colKeys.Count * colWidth, y, colWidth, Summary(cells.Select(x => x.V)), header: true, right: true);
+                rows++;
+            }
+            return rows * rowHeight;
+        }
+
+        private static List<object?> DistinctSorted(IEnumerable<object?> keys, IComparer<object?> comparer)
+        {
+            var list = new List<object?>();
+            foreach (var key in keys)
+                if (!list.Any(existing => comparer.Compare(existing, key) == 0)) list.Add(key);
+            list.Sort(comparer);
+            return list;
+        }
+
+        private const int MaxSubReportDepth = 3;
+
+        /// <summary>
+        /// Runs the sub-report on its rows and copies its items into this band, moved to the element's position.
+        /// Returns the height the sub-report needs. Its page header/footer are not used; it must fit on one page.
+        /// </summary>
+        private double PlaceSubReport(ReportItem item, RenderedItem box, EvalContext ctx, Row row, List<RenderedItem> output)
+        {
+            var label = string.IsNullOrWhiteSpace(item.Name) ? item.SubReportPath : item.Name;
+            if (_opt.SubReportDepth >= MaxSubReportDepth)
+            {
+                Warn($"Sub-report '{label}': sub-reports can be nested only {MaxSubReportDepth} deep.");
+                return 0;
+            }
+
+            var child = LoadSubReport(item, label);
+            if (child == null) return 0;
+            var childRows = SubReportRows(item, row, label);
+
+            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            foreach (var part in (item.SubReportParameters ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+            {
+                int eq = part.IndexOf('=');
+                if (eq <= 0) continue;
+                values[part.Substring(0, eq).Trim()] = SafeText(part.Substring(eq + 1).Trim(), "", ctx);
+            }
+
+            var options = new ReportOptions
+            {
+                Culture = _opt.Culture, BaseDirectory = _opt.BaseDirectory, Measurer = _opt.Measurer, Now = _now,
+                SubReports = _opt.SubReports, DataSets = _opt.DataSets, SubReportDepth = _opt.SubReportDepth + 1,
+                Rows = childRows
+            };
+
+            ReportResult res;
+            try { res = ReportEngine.Run(child, values, options); }   // qualified: Layouter has its own Run()
+            catch (InvalidOperationException ex)
+            {
+                Warn($"Sub-report '{label}': {ex.Message}");
+                return 0;
+            }
+
+            foreach (var w in res.Warnings) Warn($"Sub-report '{label}': {w}");
+            if (res.Pages.Count == 0) return 0;
+            if (res.Pages.Count > 1)
+                Warn($"Sub-report '{label}' is longer than one page; only its first page is shown.");
+
+            double used = 0;
+            foreach (var it in res.Pages[0].Items)
+            {
+                it.X = box.X + (it.X - child.Page.MarginLeft);
+                it.Y = item.Y + (it.Y - child.Page.MarginTop);
+                used = Math.Max(used, it.Y + it.Height - item.Y);
+                output.Add(it);
+            }
+            return used;
+        }
+
+        /// <summary>Finds the sub-report: a host-registered name first, else a .rsr inside the report's own folder.</summary>
+        private ReportDefinition? LoadSubReport(ReportItem item, string label)
+        {
+            var name = (item.SubReportPath ?? "").Trim();
+            if (name.Length == 0)
+            {
+                Warn($"Sub-report '{label}': no report chosen.");
+                return null;
+            }
+
+            try
+            {
+                ReportDefinition def;
+                if (_opt.SubReports != null && _opt.SubReports.TryGetValue(name, out var registered))
+                    def = registered.Clone();
+                else
+                {
+                    if (_opt.BaseDirectory == null)
+                    {
+                        Warn($"Sub-report '{label}': '{name}' is not registered and there is no folder to look in.");
+                        return null;
+                    }
+                    var root = Path.GetFullPath(_opt.BaseDirectory)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    var full = Path.GetFullPath(Path.Combine(root, name));
+                    if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase) ||
+                        !full.EndsWith(".rsr", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Warn($"Sub-report '{label}': only .rsr files inside the report's folder are allowed.");
+                        return null;
+                    }
+                    if (!File.Exists(full))
+                    {
+                        Warn($"Sub-report '{label}': file not found: {name}");
+                        return null;
+                    }
+                    def = ReportDefinition.Load(full);
+                }
+
+                // Always a host report (its own query is never run); only the body is used.
+                def.DataSource.Provider = DbProvider.Host;
+                def.PageHeader.Items.Clear(); def.PageHeader.Height = 0;
+                def.PageFooter.Items.Clear(); def.PageFooter.Height = 0;
+                return def;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+            {
+                Warn($"Sub-report '{label}': {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>The sub-report's rows: a list held in the parent row, else a host data set filtered by the link fields.</summary>
+        private List<Row> SubReportRows(ReportItem item, Row row, string label)
+        {
+            var rows = new List<Row>();
+            var source = (item.SubReportData ?? "").Trim();
+            if (source.Length == 0) return rows;
+
+            if (row.TryGetValue(source, out var nested) && nested is System.Collections.IEnumerable list && nested is not string)
+            {
+                foreach (var entry in list) AddRow(rows, entry);
+                return rows;
+            }
+
+            if (_opt.DataSets == null || !_opt.DataSets.TryGetValue(source, out var set))
+            {
+                Warn($"Sub-report '{label}': no data called '{source}'.");
+                return rows;
+            }
+
+            var childKey = (item.LinkChild ?? "").Trim();
+            var parentKey = string.IsNullOrWhiteSpace(item.LinkParent) ? childKey : item.LinkParent.Trim();
+            row.TryGetValue(parentKey, out var parentValue);
+            parentValue = Expr.Normalize(parentValue);
+
+            foreach (var candidate in set)
+            {
+                var copy = ToRow(candidate);
+                if (childKey.Length > 0)
+                {
+                    copy.TryGetValue(childKey, out var childValue);
+                    if (Expr.Compare(childValue, parentValue) != 0) continue;
+                }
+                rows.Add(copy);
+            }
+            return rows;
+        }
+
+        private static void AddRow(List<Row> rows, object? entry)
+        {
+            switch (entry)
+            {
+                case IReadOnlyDictionary<string, object?> ro: rows.Add(ToRow(ro)); break;
+                case IDictionary<string, object?> rw: rows.Add(ToRow(new Dictionary<string, object?>(rw))); break;
+            }
+        }
+
+        /// <summary>Fills in a QR code. A value that cannot be encoded (empty, or too long) prints nothing and warns.</summary>
+        private void PlaceQr(ReportItem item, RenderedItem qr, EvalContext ctx)
+        {
+            qr.QrLevel = item.QrLevel;
+
+            string value;
+            try { value = TextTemplate.Parse(item.Text).EvaluateString(ctx, item.Format); }
+            catch (ExpressionException ex)
+            {
+                Warn($"QR code '{item.Name}': {ex.Message}");
+                return;
+            }
+
+            if (!QrEncoder.TryEncode(value, item.QrLevel, out _, out var reason))
+            {
+                Warn($"QR code '{item.Name}': {reason}");
+                return;
+            }
+            qr.Text = value;
+        }
+
+        /// <summary>
+        /// Fills in a barcode: the bars item gets the value, and the readable text becomes a separate centred
+        /// text item under the bars (so Excel and Word exports carry it too). An unreadable value prints nothing and warns.
+        /// </summary>
+        private void PlaceBarcode(ReportItem item, RenderedItem bars, EvalContext ctx, List<RenderedItem> output)
+        {
+            bars.BarcodeType = item.BarcodeType;
+
+            string value;
+            try { value = TextTemplate.Parse(item.Text).EvaluateString(ctx, item.Format); }
+            catch (ExpressionException ex)
+            {
+                Warn($"Barcode '{item.Name}': {ex.Message}");
+                return;
+            }
+
+            if (!BarcodeEncoder.TryEncode(item.BarcodeType, value, out _, out var reason))
+            {
+                Warn($"Barcode '{item.Name}': {reason}");
+                return;
+            }
+
+            bars.Text = value;
+            if (!item.ShowText) return;
+
+            double captionHeight = Math.Min(item.Height / 2, Math.Ceiling(item.FontSize * 96.0 / 72.0 * 1.3));
+            bars.Height = item.Height - captionHeight;
+            output.Add(new RenderedItem
+            {
+                Kind = ItemKind.Text,
+                X = bars.X, Y = item.Y + bars.Height, Width = item.Width, Height = captionHeight,
+                Text = value,
+                FontFamily = item.FontFamily, FontSize = item.FontSize, Bold = item.Bold, Italic = item.Italic,
+                HAlign = HAlign.Center, VAlign = VAlign.Middle, WordWrap = false,
+                ForeColor = item.ForeColor
+            });
         }
 
         private string SafeText(string text, string format, EvalContext ctx)

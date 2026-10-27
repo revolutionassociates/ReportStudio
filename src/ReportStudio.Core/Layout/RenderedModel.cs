@@ -11,6 +11,10 @@ public class RenderedItem
     public double Width { get; set; }
     public double Height { get; set; }
     public string Text { get; set; } = "";
+    /// <summary>For Barcode items: the symbology; <see cref="Text"/> holds the value (empty when it cannot be encoded).</summary>
+    public ReportStudio.Core.Barcodes.BarcodeType BarcodeType { get; set; }
+    /// <summary>For QrCode items: the error-correction level; <see cref="Text"/> holds the value (empty when it cannot be encoded).</summary>
+    public ReportStudio.Core.Barcodes.QrLevel QrLevel { get; set; } = ReportStudio.Core.Barcodes.QrLevel.Medium;
     public string FontFamily { get; set; } = ReportItem.DefaultFontFamily;
     public double FontSize { get; set; } = 9;
     public bool Bold { get; set; }

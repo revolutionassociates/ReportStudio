@@ -1,4 +1,5 @@
 using System.Drawing;
+using ReportStudio.Core.Barcodes;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using ReportStudio.Core.Layout;
@@ -59,6 +60,14 @@ public static class GdiPageRenderer
             case ItemKind.Image:
                 DrawImage(g, item, rect);
                 break;
+            case ItemKind.Barcode:
+                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
+                DrawBarcode(g, item, rect);
+                break;
+            case ItemKind.QrCode:
+                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
+                DrawQr(g, item, rect);
+                break;
             case ItemKind.Text:
                 if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
                 DrawText(g, item, rect);
@@ -70,6 +79,26 @@ public static class GdiPageRenderer
             using var pen = new Pen(border.Value, (float)item.BorderWidth);
             g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
         }
+    }
+
+    private static void DrawQr(Graphics g, RenderedItem item, RectangleF rect)
+    {
+        var cells = QrLayout.Rectangles(item.Text, item.QrLevel, rect.Width, rect.Height);
+        if (cells.Count == 0) return;
+
+        // One filled path (not many rectangles) so anti-aliasing leaves no hairline gaps between modules.
+        using var path = new System.Drawing.Drawing2D.GraphicsPath(System.Drawing.Drawing2D.FillMode.Winding);
+        foreach (var (x, y, w, h) in cells)
+            path.AddRectangle(new RectangleF(rect.X + (float)x, rect.Y + (float)y, (float)w, (float)h));
+        using var brush = new SolidBrush(ColorUtil.Parse(item.ForeColor) ?? Color.Black);
+        g.FillPath(brush, path);
+    }
+
+    private static void DrawBarcode(Graphics g, RenderedItem item, RectangleF rect)
+    {
+        using var brush = new SolidBrush(ColorUtil.Parse(item.ForeColor) ?? Color.Black);
+        foreach (var (x, w) in BarcodeLayout.Bars(item.BarcodeType, item.Text, rect.Width))
+            g.FillRectangle(brush, rect.X + (float)x, rect.Y, (float)w, rect.Height);
     }
 
     private static void DrawImage(Graphics g, RenderedItem item, RectangleF rect)

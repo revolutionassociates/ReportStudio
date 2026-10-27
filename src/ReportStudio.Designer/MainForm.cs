@@ -17,6 +17,7 @@ internal sealed class MainForm : Form
     private readonly ViewerControl _viewer = new();
     private readonly ToolStripStatusLabel _status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly Dictionary<DesignTool, ToolStripButton> _toolButtons = new();
+    private RulerControl[] _rulers = Array.Empty<RulerControl>();
 
     private ReportDefinition _def = SampleReport.Create();
     private string? _path;
@@ -118,6 +119,10 @@ internal sealed class MainForm : Form
         AddToolButton(bar, DesignTool.Line, "Line");
         AddToolButton(bar, DesignTool.Rectangle, "Box");
         AddToolButton(bar, DesignTool.Image, "Image");
+        AddToolButton(bar, DesignTool.Barcode, "Barcode");
+        AddToolButton(bar, DesignTool.QrCode, "QR code");
+        AddToolButton(bar, DesignTool.SubReport, "Sub-report");
+        AddToolButton(bar, DesignTool.CrossTab, "Cross-tab");
         bar.Items.Add(new ToolStripSeparator());
 
         bar.Items.Add(Button("B", (_, _) => Toggle(i => i.Bold, (i, v) => i.Bold = v), FontStyle.Bold));
@@ -140,6 +145,23 @@ internal sealed class MainForm : Form
         var snap = new ToolStripButton("Snap to grid") { CheckOnClick = true, Checked = true };
         snap.CheckedChanged += (_, _) => _canvas.SnapToGrid = snap.Checked;
         bar.Items.Add(snap);
+
+        // Click to cycle the ruler units: cm -> in -> px
+        var unit = new ToolStripButton("Ruler: cm") { DisplayStyle = ToolStripItemDisplayStyle.Text };
+        unit.Click += (_, _) =>
+        {
+            var next = (RulerUnit)(((int)_rulers[0].Unit + 1) % 3);
+            foreach (var ruler in _rulers) ruler.Unit = next;
+            unit.Text = "Ruler: " + RulerControl.UnitName(next);
+        };
+        bar.Items.Add(unit);
+
+        // Zoom: - / % (click = back to 100%) / +; Ctrl + mouse wheel also zooms
+        var zoomLabel = Button("100%", (_, _) => _canvas.Zoom = 1.0);
+        bar.Items.Add(Button("Zoom −", (_, _) => _canvas.ZoomOut()));
+        bar.Items.Add(zoomLabel);
+        bar.Items.Add(Button("+", (_, _) => _canvas.ZoomIn()));
+        _canvas.ZoomChanged += (_, _) => zoomLabel.Text = $"{Math.Round(_canvas.Zoom * 100)}%";
         bar.Items.Add(new ToolStripSeparator());
 
         bar.Items.Add(Button("Settings…", (_, _) => EditSettings()));
@@ -166,8 +188,17 @@ internal sealed class MainForm : Form
         // centre: design / preview
         var scroller = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.FromArgb(226, 229, 234) };
         scroller.Controls.Add(_canvas);
+
+        // Rulers: docking processes the control added last first, so the fill area goes in first,
+        // then the left ruler, then the top one (which therefore spans the full width).
+        _rulers = new[] { new RulerControl(_canvas, horizontal: true), new RulerControl(_canvas, horizontal: false) };
+        var designArea = new Panel { Dock = DockStyle.Fill };
+        designArea.Controls.Add(scroller);
+        designArea.Controls.Add(_rulers[1]);
+        designArea.Controls.Add(_rulers[0]);
+
         var designTab = new TabPage("Design") { Padding = Padding.Empty };
-        designTab.Controls.Add(scroller);
+        designTab.Controls.Add(designArea);
         var previewTab = new TabPage("Preview");
         previewTab.Controls.Add(_viewer);
         _tabs.TabPages.Add(designTab);
