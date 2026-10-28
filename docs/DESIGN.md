@@ -180,6 +180,10 @@ default for new items and the fallback for an unknown font.
 **Indian formats.** `IndianFormat.Culture` groups digits 3,2,2 (`12,34,567.00`), prints dates `dd-MM-yyyy` and the ₹ symbol.
 `RoundMoney` rounds half away from zero. It is the default culture of the Viewer and `ReportRunner`.
 
+**PDF protection.** `PdfOptions` sets a password to open (`UserPassword`) and switches off printing, copying or editing.
+Restrictions only hold when an owner password nobody else knows is set; if none is given a random one is generated and
+discarded. PDFsharp 6 encrypts with AES 128-bit by default; passwords should be plain Latin-1 characters.
+
 **Headless.** `ReportRunner.ToPdf` / `ToExcel` take a definition, parameters and rows and return bytes, with no window.
 They force Host mode, so a file cannot make a headless run touch a database.
 
@@ -224,8 +228,68 @@ refresh after an intended change. The image tests need the Ubuntu fonts in `font
 
 ## 13. Roadmap
 
-1. Compile, fix, commit the golden files.
-2. Named connections with encrypted credentials for database mode.
-3. Running totals, conditional-formatting UI, report wizard, guides.
-4. Command-line runner (`reportstudio run report.rsr --param Year=2026 --pdf out.pdf`) and scheduled e-mail delivery.
-5. Web viewer (ASP.NET Core) reusing Core with a non-GDI renderer.
+Requirements 1–11 are done. The rest are numbered and ordered so that **an item only depends on items before it**;
+each one is small enough to be done, tested and delivered alone. Gauges, sparklines and maps are not planned (they belong
+with the dropped charts).
+
+**First, whenever convenient:** compile, fix the first CI errors, commit the golden files, add the Ubuntu fonts.
+Named connections with encrypted credentials (database mode) stay on hold until the HRMS needs them.
+
+**Stage 1 — Output quick wins** (touch only the exporters; independent of everything else)
+12. PDF password and permissions (payslip PDFs) — **done** (`PdfOptions`: user/owner password, allow print / copy / modify; `ReportRunner.ToPdf(..., pdf: options)`)
+13. CSV export
+14. HTML export
+15. Indic-script check in PDF (Hindi/Tamil sample; embed a Noto font; decide how to handle shaping)
+
+**Stage 2 — Engine rules** (Core only; each builds on the one before)
+16. Running totals and shared variables
+17. Conditional formatting (file format + engine)
+18. Record filter (selection expression)
+19. Sort groups by their total, Top-N
+20. Group by ranges (date by month, number by bucket)
+21. Keep-together, widow control, repeat group header on a continued group
+22. Can-shrink and suppress-if-blank
+
+**Stage 3 — Designer support for stage 2** (needs 16–22)
+23. Expression editor dialog with function list
+24. Conditional formatting editor (needs 17 and 23)
+25. Alignment guides, grouping, locking, z-order, format painter (independent)
+26. Data preview inside the designer
+
+**Stage 4 — Links and interaction**
+27. Hyperlinks and bookmarks
+28. Table of contents and PDF bookmarks (needs 27)
+29. Search in the viewer
+30. Drill-down and drill-through (needs 27)
+31. Parameter upgrades: dropdown from data, multi-value, dependent parameters, review defaults before running
+
+**Stage 5 — Elements** (each independent)
+32. More barcodes: EAN-13, UPC, ITF, Codabar
+33. Data Matrix, PDF417, Aztec
+34. Ellipse, rounded box, gradient, watermark, page background, rotated text
+35. SVG images and images from a data field
+36. Rich / HTML text
+
+**Stage 6 — Layout and data**
+37. Multi-column pages and address labels
+38. Mixed page sizes and orientations in one report
+39. Several data sets in one report (lookups, joins)
+40. Direct JSON, XML, CSV, Excel, REST and OData sources
+41. Data caching
+
+**Stage 7 — Output II**
+42. Excel formulas and one sheet per group
+43. PDF/A, digital signature, tagged PDF
+44. RTF, ODT/ODS, PowerPoint, XPS
+
+**Stage 8 — Designer II**
+45. Report wizard and templates
+46. Styles and themes
+47. Ribbon, dark mode, localised designer UI
+
+**Stage 9 — Platform**
+48. Command-line runner (`reportstudio run report.rsr --param Year=2026 --pdf out.pdf`)
+49. Web viewer (ASP.NET Core) reusing Core with a non-GDI renderer
+50. Report server: scheduling, e-mail delivery, subscriptions
+51. Roles and report versioning
+52. AI-assisted design (optional)

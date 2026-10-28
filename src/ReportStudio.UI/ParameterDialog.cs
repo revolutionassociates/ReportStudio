@@ -68,6 +68,8 @@ public sealed class ParameterDialog : Form
     }
 
     /// <summary>Raw string values keyed by parameter name (dates in invariant yyyy-MM-dd).</summary>
+    [System.ComponentModel.Browsable(false),
+     System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Dictionary<string, string?> Values
     {
         get

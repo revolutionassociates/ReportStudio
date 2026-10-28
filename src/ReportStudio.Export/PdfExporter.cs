@@ -21,19 +21,40 @@ public static class PdfExporter
             GlobalFontSettings.UseWindowsFontsUnderWindows = true;
     }
 
-    public static void Export(ReportResult report, string path)
+    public static void Export(ReportResult report, string path, PdfOptions? options = null)
     {
-        using var doc = Build(report);
+        using var doc = Build(report, options);
         doc.Save(path);
     }
 
-    public static void Export(ReportResult report, Stream stream)
+    public static void Export(ReportResult report, Stream stream, PdfOptions? options = null)
     {
-        using var doc = Build(report);
+        using var doc = Build(report, options);
         doc.Save(stream, closeStream: false);
     }
 
-    private static PdfDocument Build(ReportResult report)
+    /// <summary>Password and permissions. Must be set after the pages are added and before the file is saved.</summary>
+    private static void ApplySecurity(PdfDocument doc, PdfOptions? options)
+    {
+        if (options == null || !options.NeedsEncryption) return;
+
+        var security = doc.SecuritySettings;
+        security.UserPassword = options.UserPassword ?? "";
+        // Permissions are only enforced when there is an owner password nobody else knows.
+        security.OwnerPassword = string.IsNullOrEmpty(options.OwnerPassword)
+            ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(18))
+            : options.OwnerPassword;
+        // PDFsharp 6 encrypts as soon as a password is set (AES 128-bit by default); there is no separate level to choose.
+
+        security.PermitPrint = options.AllowPrint;
+        security.PermitFullQualityPrint = options.AllowPrint;
+        security.PermitExtractContent = options.AllowCopy;
+        security.PermitModifyDocument = options.AllowModify;
+        security.PermitAnnotations = options.AllowModify;
+        security.PermitAssembleDocument = options.AllowModify;
+    }
+
+    private static PdfDocument Build(ReportResult report, PdfOptions? options = null)
     {
         var doc = new PdfDocument();
         doc.Info.Title = report.ReportName;
@@ -41,13 +62,14 @@ public static class PdfExporter
         foreach (var page in report.Pages)
         {
             var p = doc.AddPage();
-            p.Width = new XUnitPt(page.Width * PxToPt);      // doubles convert implicitly to PDFsharp's unit type
-            p.Height = new XUnitPt(page.Height * PxToPt);
+            p.Width = new XUnit(page.Width * PxToPt);      // doubles convert implicitly to PDFsharp's unit type
+            p.Height = new XUnit(page.Height * PxToPt);
             using var gfx = XGraphics.FromPdfPage(p);
             gfx.ScaleTransform(PxToPt);          // draw in report pixels
             foreach (var item in page.Items) DrawItem(gfx, item);
         }
         if (doc.PageCount == 0) doc.AddPage();
+        ApplySecurity(doc, options);
         return doc;
     }
 

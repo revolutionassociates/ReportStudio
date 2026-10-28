@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Runtime.CompilerServices;
 using ReportStudio.Core.Layout;
@@ -54,7 +55,11 @@ public sealed class DesignCanvas : Control
     private readonly Stack<string> _redo = new();
     private string _lastSnapshot = "";
 
+    // Run-time settings, not designer-serialised properties (analyzer WFO1000).
+    [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public DesignTool Tool { get; set; } = DesignTool.Select;
+
+    [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool SnapToGrid { get; set; } = true;
 
     public event EventHandler? SelectionChanged;
@@ -84,6 +89,7 @@ public sealed class DesignCanvas : Control
     public event EventHandler? ZoomChanged;
 
     /// <summary>Display scale of the design surface (1 = 100%). Everything inside the canvas stays in report pixels.</summary>
+    [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public double Zoom
     {
         get => _zoom;
@@ -126,6 +132,7 @@ public sealed class DesignCanvas : Control
 
     // ================================================================ public API
 
+    [Browsable(false), DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public ReportDefinition Definition
     {
         get => _def;

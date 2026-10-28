@@ -1,8 +1,6 @@
 using System.Drawing;
 using ReportStudio.Core.Layout;
 using ReportStudio.Export;
-using System.ComponentModel;
-using System.Drawing;
 
 namespace ReportStudio.UI;
 
@@ -19,16 +17,16 @@ public sealed class PageSurface : Control
         BackColor = Color.White;
     }
 
-    [Browsable(false)]
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [System.ComponentModel.Browsable(false),
+     System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public RenderedPage? Page
     {
         get => _page;
         set { _page = value; UpdateSize(); Invalidate(); }
     }
 
-    [Browsable(false)]
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    [System.ComponentModel.Browsable(false),
+     System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public float Zoom
     {
         get => _zoom;

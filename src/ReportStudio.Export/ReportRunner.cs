@@ -13,11 +13,12 @@ namespace ReportStudio.Export;
 public static class ReportRunner
 {
     public static byte[] ToPdf(ReportDefinition definition, IEnumerable<IReadOnlyDictionary<string, object?>> rows,
-        IDictionary<string, string?>? parameters = null, CultureInfo? culture = null, string? baseDirectory = null)
+        IDictionary<string, string?>? parameters = null, CultureInfo? culture = null, string? baseDirectory = null,
+        PdfOptions? pdf = null)
     {
         var result = Render(definition, rows, parameters, culture, baseDirectory);
         using var ms = new MemoryStream();
-        PdfExporter.Export(result, ms);
+        PdfExporter.Export(result, ms, pdf);
         return ms.ToArray();
     }
 

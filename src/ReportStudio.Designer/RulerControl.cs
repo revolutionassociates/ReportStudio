@@ -33,6 +33,8 @@ internal sealed class RulerControl : Control
         _canvas.DefinitionReplaced += (_, _) => Invalidate();
     }
 
+    [System.ComponentModel.Browsable(false),
+     System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public RulerUnit Unit
     {
         get => _unit;
