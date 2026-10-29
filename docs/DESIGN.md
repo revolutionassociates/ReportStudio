@@ -170,6 +170,8 @@ employee with a long statement prints "Page 2 of 3". Each page records its secti
 | PDF | PDFsharp vector drawing, own word-wrap | Selectable text; fonts embedded; page size = report page; barcode/QR as vector shapes |
 | Excel | OpenXML; band lines become rows, left edges become columns | Numbers stay numbers with Indian number formats; dates `dd-mm-yyyy`; barcode/QR bars are not carried (their caption text is) |
 | Word | OpenXML; borderless table keeping column layout | Editable, not pixel-identical |
+| HTML | One self-contained `.html`: a sheet per page, absolutely positioned elements, images as data URIs, barcode/QR as inline SVG, no scripts | Text stays selectable; fonts are not embedded (falls back to Segoe UI / Arial); prints one report page per sheet |
+| CSV | Same table as Excel/Word; UTF-8 with BOM, CRLF | Headings + detail by default; numbers plain (`1234567.50`), dates ISO, `007`-style codes stay text; text starting `=` `@` or `+`/`-` gets a leading `'` |
 | Images | GDI+ at 150 dpi (configurable) | One file per page |
 | Print | Pages rasterised at 200 dpi | Same renderer as the preview |
 
@@ -200,7 +202,7 @@ Requirements: .NET 10 SDK (pinned in `global.json`).
 
 ```
 dotnet build ReportStudio.sln -c Release -warnaserror
-dotnet test  ReportStudio.sln -c Release
+dotnet test  --solution ReportStudio.sln -c Release   # xunit v3 on Microsoft Testing Platform (set in global.json)
 dotnet run   --project src/ReportStudio.Designer
 dotnet run   --project src/ReportStudio.Viewer -- path\to\report.rsr
 ```
@@ -237,8 +239,8 @@ Named connections with encrypted credentials (database mode) stay on hold until 
 
 **Stage 1 — Output quick wins** (touch only the exporters; independent of everything else)
 12. PDF password and permissions (payslip PDFs) — **done** (`PdfOptions`: user/owner password, allow print / copy / modify; `ReportRunner.ToPdf(..., pdf: options)`)
-13. CSV export
-14. HTML export
+13. CSV export — **done** (`CsvExporter`, `CsvOptions`: separator, data only or every line, plain or as-printed numbers; UTF-8 with BOM; formula-injection guard)
+14. HTML export — **done** (`HtmlExporter`: one self-contained file, a sheet per report page, elements positioned exactly, pictures embedded, barcodes/QR as inline SVG, prints one page per sheet)
 15. Indic-script check in PDF (Hindi/Tamil sample; embed a Noto font; decide how to handle shaping)
 
 **Stage 2 — Engine rules** (Core only; each builds on the one before)
