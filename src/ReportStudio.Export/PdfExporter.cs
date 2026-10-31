@@ -144,6 +144,7 @@ public static class PdfExporter
     private static void DrawText(XGraphics g, RenderedItem it, XRect rect)
     {
         if (string.IsNullOrEmpty(it.Text)) return;
+        if (PdfComplexText.TryDraw(g, it, rect)) return;   // Hindi, Tamil, ...: shaped by GDI+, see PdfComplexText
 
         var style = XFontStyleEx.Regular;
         if (it.Bold) style |= XFontStyleEx.Bold;

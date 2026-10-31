@@ -241,13 +241,13 @@ Named connections with encrypted credentials (database mode) stay on hold until 
 12. PDF password and permissions (payslip PDFs) — **done** (`PdfOptions`: user/owner password, allow print / copy / modify; `ReportRunner.ToPdf(..., pdf: options)`)
 13. CSV export — **done** (`CsvExporter`, `CsvOptions`: separator, data only or every line, plain or as-printed numbers; UTF-8 with BOM; formula-injection guard)
 14. HTML export — **done** (`HtmlExporter`: one self-contained file, a sheet per report page, elements positioned exactly, pictures embedded, barcodes/QR as inline SVG, prints one page per sheet)
-15. Indic-script check in PDF (Hindi/Tamil sample; embed a Noto font; decide how to handle shaping)
+15. Indic-script check in PDF — **done** (PDFsharp does no shaping, so Hindi/Tamil/other Indic text is laid out by GDI+ and written to the PDF as filled outlines: `ComplexScript` detects the script, `PdfComplexText` draws it. Font: the script's Noto Sans .ttf from the `Fonts` folder, else an installed Windows font such as Nirmala UI, else the old text path. Trade-off: that text is not selectable or searchable in the PDF; Latin text stays real text. Test writes `Golden/indic-sample.pdf` for a visual check)
 
 **Stage 2 — Engine rules** (Core only; each builds on the one before)
-16. Running totals and shared variables
-17. Conditional formatting (file format + engine)
-18. Record filter (selection expression)
-19. Sort groups by their total, Top-N
+16. Running totals and shared variables — **done** (`ReportDefinition.Variables`, each a `VariableDefinition`: Name, Function Sum/Count/Min/Max/Average/Assign, Expression, optional Condition and Initial, Reset Never/Group(level)/Page. Shown as `{Name}` in any band; a detail row counts before it prints, so a running total includes its own line; a page footer never includes a row that moved to the next page; a data field of the same name wins. `Assign` with `Balance + Credit - Debit` gives balances/shared values. Edited in the .rsr file for now; the designer dialog comes with items 23-26)
+17. Conditional formatting (file format + engine) — **done** (`ReportItem.Rules`, each a `FormatRule`: Condition plus optional ForeColor, BackColor, BorderColor and Bold/Italic/Underline true/false. Every true rule applies in order, so a later one wins; empty settings are left alone; conditions can use fields, variables and parameters; a bad condition is a warning and the item keeps its design. Only the printed copy changes. Edited in the .rsr file for now; the designer dialog comes with items 23-26)
+18. Record filter (selection expression) — **done** (`ReportDefinition.Filter`, e.g. `Status == 'Active' && Amount > @Min`; applied before sorting, grouping and totals, so everything counts only the kept rows and a group with no kept rows does not print; works in sub-reports too; the caller's rows are not changed; a row the filter cannot be worked out for is left out and one warning is given. Edited in the .rsr file for now; the report settings dialog gets a box with items 23-26)
+19. Sort groups by their total, Top-N — **done** (per group: `SortExpression` such as `Sum(Amount)`, `SortDescending`, `TopN`. Done on the rows before layout, so every total, including the report footer, counts only the kept groups; ties keep the group-key order; works for inner groups inside each outer group; a bad sort expression is a warning and the key order stays. Edited in the .rsr file for now; the group dialog gets boxes with items 23-26)
 20. Group by ranges (date by month, number by bucket)
 21. Keep-together, widow control, repeat group header on a continued group
 22. Can-shrink and suppress-if-blank

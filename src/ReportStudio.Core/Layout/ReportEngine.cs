@@ -48,12 +48,40 @@ public static class ReportEngine
             throw new InvalidOperationException(
                 "This report takes its data from the host application. Call Run with the rows supplied.");
         else rows = DataLoader.Load(def.DataSource, parameters);
+        var filterWarnings = new List<string>();
+        rows = Filter(def, rows, parameters, options, filterWarnings);
         rows = Sort(def, rows, parameters, options);
+        rows = OrderGroups(def, rows, parameters, options, filterWarnings);
 
         // Pass 1 counts the pages of every numbering section; pass 2 prints "Page n of m" with those counts.
         var first = new Layouter(def, rows, parameters, options, sectionTotals: null).Run();
         var totals = first.Pages.GroupBy(p => p.Section).ToDictionary(g => g.Key, g => g.Count());
-        return new Layouter(def, rows, parameters, options, totals).Run();
+        var result = new Layouter(def, rows, parameters, options, totals).Run();
+        result.Warnings.InsertRange(0, filterWarnings);
+        return result;
+    }
+
+    /// <summary>
+    /// Keeps the rows for which the report's filter is true. A row the filter cannot be worked out for is left out
+    /// and reported once, so a typo shows up as a warning and an obviously short report rather than as wrong totals.
+    /// </summary>
+    private static List<Row> Filter(ReportDefinition def, List<Row> rows, Row parameters, ReportOptions options,
+        List<string> warnings)
+    {
+        if (string.IsNullOrWhiteSpace(def.Filter)) return rows;
+
+        var kept = new List<Row>(rows.Count);
+        foreach (var row in rows)
+        {
+            var ctx = new EvalContext { Row = row, Parameters = parameters, Culture = options.Culture };
+            try { if (Expr.IsTrue(Expr.Evaluate(def.Filter, ctx))) kept.Add(row); }
+            catch (ExpressionException ex)
+            {
+                var message = $"Filter '{def.Filter}': {ex.Message}";
+                if (!warnings.Contains(message)) warnings.Add(message);
+            }
+        }
+        return kept;
     }
 
     /// <summary>Runs a report on rows supplied by the caller (the Host data source). Keys are field names.</summary>
@@ -88,6 +116,65 @@ public static class ReportEngine
         var row = new Row(StringComparer.OrdinalIgnoreCase);
         foreach (var (key, value) in source) row[key] = Expr.Normalize(value);
         return row;
+    }
+
+    /// <summary>
+    /// Puts the instances of each group in the order of its SortExpression and keeps the first TopN. Done on the rows
+    /// before layout (the rows come back already in final order, still grouped), so every total, including the report
+    /// footer's, counts only the groups that are kept.
+    /// </summary>
+    private static List<Row> OrderGroups(ReportDefinition def, List<Row> rows, Row parameters, ReportOptions options,
+        List<string> warnings)
+    {
+        if (!def.Groups.Any(g => !string.IsNullOrWhiteSpace(g.SortExpression) || g.TopN > 0)) return rows;
+        return OrderLevel(def, 0, rows, parameters, options, warnings);
+    }
+
+    private static List<Row> OrderLevel(ReportDefinition def, int level, List<Row> rows, Row parameters,
+        ReportOptions options, List<string> warnings)
+    {
+        if (level == def.Groups.Count) return rows;
+        var group = def.Groups[level];
+
+        // The same consecutive-key split the layout uses.
+        var partitions = new List<List<Row>>();
+        int i = 0;
+        while (i < rows.Count)
+        {
+            var key = SafeKey(group.Expression, new EvalContext { Row = rows[i], Parameters = parameters, Culture = options.Culture });
+            int j = i + 1;
+            while (j < rows.Count && Expr.Compare(key,
+                       SafeKey(group.Expression, new EvalContext { Row = rows[j], Parameters = parameters, Culture = options.Culture })) == 0) j++;
+            partitions.Add(rows.GetRange(i, j - i));
+            i = j;
+        }
+
+        if (!string.IsNullOrWhiteSpace(group.SortExpression))
+        {
+            var cmp = Comparer<object?>.Create(Expr.Compare);
+            var keyed = partitions.Select(p => (Rows: p, Key: GroupSortKey(group.SortExpression, p, parameters, options, warnings))).ToList();
+            partitions = (group.SortDescending ? keyed.OrderByDescending(x => x.Key, cmp) : keyed.OrderBy(x => x.Key, cmp))
+                .Select(x => x.Rows).ToList();     // OrderBy is stable, so ties keep the key order
+        }
+        if (group.TopN > 0 && partitions.Count > group.TopN) partitions = partitions.Take(group.TopN).ToList();
+
+        var result = new List<Row>();
+        foreach (var partition in partitions)
+            result.AddRange(OrderLevel(def, level + 1, partition, parameters, options, warnings));
+        return result;
+    }
+
+    private static object? GroupSortKey(string expression, List<Row> partition, Row parameters, ReportOptions options,
+        List<string> warnings)
+    {
+        var ctx = new EvalContext { Row = partition[0], Scope = partition, Parameters = parameters, Culture = options.Culture };
+        try { return Expr.Evaluate(expression, ctx); }
+        catch (ExpressionException ex)
+        {
+            var message = $"Group sort '{expression}': {ex.Message}";
+            if (!warnings.Contains(message)) warnings.Add(message);
+            return null;
+        }
     }
 
     private static List<Row> Sort(ReportDefinition def, List<Row> rows, Row parameters, ReportOptions options)
@@ -151,6 +238,19 @@ public static class ReportEngine
         private Row _currentRow;
         private Row _footerRow;
 
+        // Report variables (running totals): the values bands can read, and the state behind each one.
+        private readonly Row _vars = new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<VarState> _varStates = new();
+
+        private sealed class VarState
+        {
+            public VariableDefinition Def { get; }
+            public object? Value { get; set; }
+            public decimal Sum { get; set; }
+            public int Count { get; set; }
+            public VarState(VariableDefinition def) { Def = def; }
+        }
+
         public Layouter(ReportDefinition def, List<Row> rows, Row parameters, ReportOptions opt,
             IReadOnlyDictionary<int, int>? sectionTotals)
         {
@@ -158,6 +258,86 @@ public static class ReportEngine
             _now = opt.Now ?? DateTime.Now;
             _currentRow = rows.Count > 0 ? rows[0] : _emptyRow;
             _footerRow = _currentRow;
+            foreach (var v in def.Variables) _varStates.Add(new VarState(v));
+            ResetVariables(s => true);
+        }
+
+        // ---- variables ------------------------------------------------------------------------
+
+        /// <summary>Puts the matching variables back to their starting value.</summary>
+        private void ResetVariables(Func<VariableDefinition, bool> which)
+        {
+            foreach (var s in _varStates)
+            {
+                if (!which(s.Def)) continue;
+                s.Sum = 0; s.Count = 0;
+                object? start = s.Def.Function is VariableFunction.Min or VariableFunction.Max or VariableFunction.Average ? null : 0m;
+                if (!string.IsNullOrWhiteSpace(s.Def.Initial))
+                {
+                    try { start = Expr.Evaluate(s.Def.Initial, Ctx(_currentRow, _rows)); }
+                    catch (ExpressionException ex) { Warn($"Variable '{s.Def.Name}' initial value: {ex.Message}"); }
+                }
+                s.Value = start;
+                _vars[s.Def.Name] = start;
+            }
+        }
+
+        /// <summary>Adds one printed detail row to every variable.</summary>
+        private void Accumulate(Row row, List<Row> scope)
+        {
+            if (_varStates.Count == 0) return;
+            foreach (var s in _varStates)
+            {
+                var def = s.Def;
+                try
+                {
+                    var ctx = Ctx(row, scope);
+                    if (!string.IsNullOrWhiteSpace(def.Condition) && !Expr.IsTrue(Expr.Evaluate(def.Condition, ctx))) continue;
+                    object? value = string.IsNullOrWhiteSpace(def.Expression) ? null : Expr.Evaluate(def.Expression, ctx);
+
+                    switch (def.Function)
+                    {
+                        case VariableFunction.Sum:
+                            s.Value = Expr.ToNumber(s.Value) + Expr.ToNumber(value);
+                            break;
+                        case VariableFunction.Count:
+                            if (string.IsNullOrWhiteSpace(def.Expression) || value != null) s.Value = Expr.ToNumber(s.Value) + 1;
+                            break;
+                        case VariableFunction.Min:
+                            if (value != null && (s.Value == null || Expr.Compare(value, s.Value) < 0)) s.Value = value;
+                            break;
+                        case VariableFunction.Max:
+                            if (value != null && (s.Value == null || Expr.Compare(value, s.Value) > 0)) s.Value = value;
+                            break;
+                        case VariableFunction.Average:
+                            if (value != null && Expr.TryNumber(value, out var number))
+                            {
+                                s.Sum += number; s.Count++;
+                                s.Value = s.Sum / s.Count;
+                            }
+                            break;
+                        case VariableFunction.Assign:
+                            if (!string.IsNullOrWhiteSpace(def.Expression)) s.Value = value;
+                            break;
+                    }
+                    _vars[def.Name] = s.Value;
+                }
+                catch (ExpressionException ex) { Warn($"Variable '{def.Name}': {ex.Message}"); }
+            }
+        }
+
+        private (object? Value, decimal Sum, int Count)[] SnapshotVariables() =>
+            _varStates.Select(s => (s.Value, s.Sum, s.Count)).ToArray();
+
+        private void RestoreVariables((object? Value, decimal Sum, int Count)[] snapshot)
+        {
+            for (int i = 0; i < snapshot.Length; i++)
+            {
+                _varStates[i].Value = snapshot[i].Value;
+                _varStates[i].Sum = snapshot[i].Sum;
+                _varStates[i].Count = snapshot[i].Count;
+                _vars[_varStates[i].Def.Name] = snapshot[i].Value;
+            }
         }
 
         private double BodyBottom => _def.Page.Height - _def.Page.MarginBottom - _def.PageFooter.Height;
@@ -184,7 +364,7 @@ public static class ReportEngine
                 {
                     _currentRow = row;
                     _rowNumber++;
-                    RenderBand(_def.Detail, row, rows);
+                    RenderBand(_def.Detail, row, rows, accumulate: true);
                 }
                 return;
             }
@@ -201,6 +381,8 @@ public static class ReportEngine
                 if ((group.StartNewPage || group.RestartPageNumbers) && _pageHasBody)
                     NewPage(restartNumbering: group.RestartPageNumbers);
                 _currentRow = partition[0];
+                int groupLevel = level + 1;
+                ResetVariables(v => v.Reset == VariableReset.Group && v.ResetGroup == groupLevel);
                 RenderBand(group.Header, partition[0], partition);
                 RenderLevel(level + 1, partition);
                 _currentRow = partition[partition.Count - 1];
@@ -229,6 +411,7 @@ public static class ReportEngine
             _y = _def.Page.MarginTop;
             _bandInstance = 0;
             _pageHasBody = false;
+            ResetVariables(v => v.Reset == VariableReset.Page);
 
             var headerRow = _rows.Count > 0 ? _rows[0] : _emptyRow;
             if (first) PlaceBand(_def.ReportHeader, headerRow, _rows);
@@ -254,14 +437,21 @@ public static class ReportEngine
         // ---- bands ----------------------------------------------------------------------------
 
         /// <summary>Renders a flowing body band, breaking to a new page first when it does not fit.</summary>
-        private void RenderBand(Band band, Row row, List<Row> scope)
+        private void RenderBand(Band band, Row row, List<Row> scope, bool accumulate = false)
         {
+            // A detail row counts toward the variables before it prints, so {RunningTotal} includes its own line.
+            var before = accumulate ? SnapshotVariables() : null;
+            if (accumulate) Accumulate(row, scope);
+
             var items = Evaluate(band, row, scope, out double height);
             if (items.Count == 0 && height <= 0) return;
 
             if (_y + height > BodyBottom && _pageHasBody)
             {
+                // The row belongs to the next page, so the finished page's footer must not include it yet.
+                if (before != null) RestoreVariables(before);
                 NewPage();
+                if (accumulate) Accumulate(row, scope);
                 // Evaluate again on the new page so {Page} and friends show the right values.
                 items = Evaluate(band, row, scope, out height);
             }
@@ -318,6 +508,7 @@ public static class ReportEngine
                     ForeColor = item.ForeColor, BackColor = item.BackColor,
                     BorderColor = item.BorderColor, BorderWidth = item.BorderWidth
                 };
+                ApplyRules(item, r, ctx);
 
                 if (item.Kind == ItemKind.Text)
                 {
@@ -736,11 +927,30 @@ public static class ReportEngine
             return null;
         }
 
+        /// <summary>Conditional formatting: every rule that is true changes the printed copy, in order (the design is untouched).</summary>
+        private void ApplyRules(ReportItem item, RenderedItem r, EvalContext ctx)
+        {
+            foreach (var rule in item.Rules)
+            {
+                if (string.IsNullOrWhiteSpace(rule.Condition)) continue;
+                try { if (!Expr.IsTrue(Expr.Evaluate(rule.Condition, ctx))) continue; }
+                catch (ExpressionException ex) { Warn($"Format rule '{rule.Condition}': {ex.Message}"); continue; }
+
+                if (!string.IsNullOrWhiteSpace(rule.ForeColor)) r.ForeColor = rule.ForeColor;
+                if (!string.IsNullOrWhiteSpace(rule.BackColor)) r.BackColor = rule.BackColor;
+                if (!string.IsNullOrWhiteSpace(rule.BorderColor)) r.BorderColor = rule.BorderColor;
+                if (rule.Bold.HasValue) r.Bold = rule.Bold.Value;
+                if (rule.Italic.HasValue) r.Italic = rule.Italic.Value;
+                if (rule.Underline.HasValue) r.Underline = rule.Underline.Value;
+            }
+        }
+
         private EvalContext Ctx(Row row, List<Row> scope) => new()
         {
             Row = row,
             Scope = scope,
             Parameters = _parameters,
+            Variables = _vars,
             PageNumber = _sectionPage,
             TotalPages = _sectionTotals != null && _sectionTotals.TryGetValue(_section, out var total) ? total : _sectionPage,
             RowNumber = _rowNumber,

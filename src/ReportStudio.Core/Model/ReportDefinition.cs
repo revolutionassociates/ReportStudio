@@ -22,6 +22,15 @@ public class ReportDefinition
     /// <summary>Optional sort expressions applied after grouping keys, e.g. "OrderDate".</summary>
     public List<string> SortBy { get; set; } = new();
 
+    /// <summary>
+    /// Record filter: only rows for which this expression is true are used, e.g. "Status == 'Active' &amp;&amp; Net &gt; 0".
+    /// Applied before grouping, totals and printing, so every total counts only the kept rows. Empty = all rows.
+    /// </summary>
+    public string Filter { get; set; } = "";
+
+    /// <summary>Running totals and shared values, updated as detail rows print and shown as {Name} in any band.</summary>
+    public List<VariableDefinition> Variables { get; set; } = new();
+
     public Band ReportHeader { get; set; } = new() { Kind = BandKind.ReportHeader, Height = 60 };
     public Band PageHeader { get; set; } = new() { Kind = BandKind.PageHeader, Height = 30 };
     public Band Detail { get; set; } = new() { Kind = BandKind.Detail, Height = 22 };
@@ -73,6 +82,9 @@ public class ReportDefinition
         yield return PageFooter;
     }
 
+    public static bool IsValidVariableName(string? name) =>
+        !string.IsNullOrEmpty(name) && !char.IsDigit(name[0]) && name.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
+
     /// <summary>Makes Kind values and names consistent after loading or editing.</summary>
     public void Normalize()
     {
@@ -84,6 +96,11 @@ public class ReportDefinition
             DataSource.ConnectionString = "";
         }
 
+        // A variable needs a usable name; the first of two with the same name wins.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        Variables.RemoveAll(v => v == null || !IsValidVariableName(v.Name) || !seen.Add(v.Name));
+        foreach (var v in Variables) v.ResetGroup = Math.Max(1, v.ResetGroup);
+
         ReportHeader.Kind = BandKind.ReportHeader;
         PageHeader.Kind = BandKind.PageHeader;
         Detail.Kind = BandKind.Detail;
@@ -92,6 +109,7 @@ public class ReportDefinition
         for (int i = 0; i < Groups.Count; i++)
         {
             var g = Groups[i];
+            g.TopN = Math.Max(0, g.TopN);
             g.Header.Kind = BandKind.GroupHeader;
             g.Footer.Kind = BandKind.GroupFooter;
             g.Header.Name = $"Group Header {i + 1}";
@@ -156,6 +174,19 @@ public class GroupDefinition
     /// count only that instance's pages (e.g. "Page 1 of 1" for every employee's payslip).
     /// </summary>
     public bool RestartPageNumbers { get; set; }
+
+    /// <summary>
+    /// Orders this group's instances by a value worked out over each one, e.g. "Sum(Amount)" puts customers in order of
+    /// sales. Empty = in the order of the group expression. Ties keep that order.
+    /// </summary>
+    public string SortExpression { get; set; } = "";
+
+    /// <summary>True = largest first (usual for totals). False = smallest first.</summary>
+    public bool SortDescending { get; set; }
+
+    /// <summary>Keep only the first N instances after ordering (Top 10 customers). 0 = all. Totals above count only those kept.</summary>
+    public int TopN { get; set; }
+
     public Band Header { get; set; } = new() { Kind = BandKind.GroupHeader, Height = 26 };
     public Band Footer { get; set; } = new() { Kind = BandKind.GroupFooter, Height = 26 };
 }

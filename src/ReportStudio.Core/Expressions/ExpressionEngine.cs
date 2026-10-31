@@ -18,6 +18,8 @@ public class EvalContext
         Array.Empty<IReadOnlyDictionary<string, object?>>();
     public IReadOnlyDictionary<string, object?> Parameters { get; set; } =
         new Dictionary<string, object?>();
+    /// <summary>Report variables (running totals, shared values) by name; read after row fields and parameters.</summary>
+    public IReadOnlyDictionary<string, object?>? Variables { get; set; }
     public int PageNumber { get; set; } = 1;
     public int TotalPages { get; set; } = 1;
     public int RowNumber { get; set; }
@@ -26,7 +28,7 @@ public class EvalContext
 
     public EvalContext ForRow(IReadOnlyDictionary<string, object?> row) => new()
     {
-        Row = row, Scope = Scope, Parameters = Parameters, PageNumber = PageNumber,
+        Row = row, Scope = Scope, Parameters = Parameters, Variables = Variables, PageNumber = PageNumber,
         TotalPages = TotalPages, RowNumber = RowNumber, Now = Now, Culture = Culture
     };
 }
@@ -144,6 +146,7 @@ internal sealed class FieldRef : Node
         }
         if (ctx.Row != null && ctx.Row.TryGetValue(_name, out var v)) return v;
         if (ctx.Parameters.TryGetValue(_name, out var p)) return p;
+        if (ctx.Variables != null && ctx.Variables.TryGetValue(_name, out var variable)) return variable;
         if (ctx.Row == null || ctx.Row.Count == 0) return null;
         throw new ExpressionException($"Unknown field '{_name}'");
     }

@@ -133,7 +133,16 @@ public class ReportItem
     [JsonIgnore, Browsable(false)] public double Right => X + Width;
     [JsonIgnore, Browsable(false)] public double Bottom => Y + Height;
 
-    public ReportItem Clone() => (ReportItem)MemberwiseClone();
+    /// <summary>Conditional formatting: each rule whose condition is true changes colours and font style, in order.</summary>
+    [Browsable(false)]
+    public List<FormatRule> Rules { get; set; } = new();
+
+    public ReportItem Clone()
+    {
+        var copy = (ReportItem)MemberwiseClone();
+        copy.Rules = Rules.Select(r => r.Clone()).ToList();     // a copy must not share rules with the original
+        return copy;
+    }
 
     public override string ToString() => string.IsNullOrEmpty(Name) ? Kind.ToString() : Name;
 }
