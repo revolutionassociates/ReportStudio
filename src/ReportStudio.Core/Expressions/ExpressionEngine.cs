@@ -20,6 +20,8 @@ public class EvalContext
         new Dictionary<string, object?>();
     /// <summary>Report variables (running totals, shared values) by name; read after row fields and parameters.</summary>
     public IReadOnlyDictionary<string, object?>? Variables { get; set; }
+    /// <summary>True while a group header is printed again on a continuation page (see GroupDefinition.RepeatHeader).</summary>
+    public bool Continued { get; set; }
     public int PageNumber { get; set; } = 1;
     public int TotalPages { get; set; } = 1;
     public int RowNumber { get; set; }
@@ -28,7 +30,7 @@ public class EvalContext
 
     public EvalContext ForRow(IReadOnlyDictionary<string, object?> row) => new()
     {
-        Row = row, Scope = Scope, Parameters = Parameters, Variables = Variables, PageNumber = PageNumber,
+        Row = row, Scope = Scope, Parameters = Parameters, Variables = Variables, Continued = Continued, PageNumber = PageNumber,
         TotalPages = TotalPages, RowNumber = RowNumber, Now = Now, Culture = Culture
     };
 }
@@ -147,6 +149,7 @@ internal sealed class FieldRef : Node
         if (ctx.Row != null && ctx.Row.TryGetValue(_name, out var v)) return v;
         if (ctx.Parameters.TryGetValue(_name, out var p)) return p;
         if (ctx.Variables != null && ctx.Variables.TryGetValue(_name, out var variable)) return variable;
+        if (string.Equals(_name, "Continued", StringComparison.OrdinalIgnoreCase)) return ctx.Continued;   // after data fields, so a column of that name wins
         if (ctx.Row == null || ctx.Row.Count == 0) return null;
         throw new ExpressionException($"Unknown field '{_name}'");
     }
@@ -280,6 +283,36 @@ internal sealed class Call : Node
             case "year": return A(0) is DateTime y ? (decimal)y.Year : null;
             case "month": return A(0) is DateTime m ? (decimal)m.Month : null;
             case "day": return A(0) is DateTime d ? (decimal)d.Day : null;
+
+            // ---- ranges for grouping: group by MonthStart(Date), FinancialYear(Date), Bucket(Amount, 1000) ... ----
+            case "monthstart": return A(0) is DateTime ms ? new DateTime(ms.Year, ms.Month, 1) : null;
+            case "quarterstart": return A(0) is DateTime qs ? new DateTime(qs.Year, (qs.Month - 1) / 3 * 3 + 1, 1) : null;
+            case "yearstart": return A(0) is DateTime ys ? new DateTime(ys.Year, 1, 1) : null;
+            case "weekstart": return A(0) is DateTime ws ? ws.Date.AddDays(-(((int)ws.DayOfWeek + 6) % 7)) : null;   // Monday
+            case "financialyear":       // Indian financial year, April to March: "2025-26"
+            {
+                if (A(0) is not DateTime fy) return null;
+                int start = fy.Month >= 4 ? fy.Year : fy.Year - 1;
+                return $"{start}-{(start + 1) % 100:00}";
+            }
+            case "bucket":              // the lower end of the equal-sized range the number falls in: Bucket(1750, 1000) = 1000
+            {
+                Need(2);
+                if (!Expr.TryNumber(A(0), out var number)) return null;
+                var size = Expr.ToNumber(A(1));
+                return size <= 0 ? null : Math.Floor(number / size) * size;
+            }
+            case "range": case "rangelabel":    // ranges with your own limits: Range(Amount, 1000, 5000, 20000)
+            {
+                Need(2);
+                if (!Expr.TryNumber(A(0), out var value)) return null;
+                var limits = a.Skip(1).Select(Expr.ToNumber).Distinct().OrderBy(x => x).ToList();
+                int at = limits.FindLastIndex(limit => limit <= value);
+                if (fn == "range") return at < 0 ? null : limits[at];          // lower limit, so groups sort in order
+                string Show(decimal n) => Expr.Format(n, "#,##0.##", ctx.Culture);
+                if (at < 0) return "Below " + Show(limits[0]);
+                return at == limits.Count - 1 ? Show(limits[at]) + " and above" : Show(limits[at]) + " to below " + Show(limits[at + 1]);
+            }
         }
         throw new ExpressionException($"Unknown function '{_name}'");
     }

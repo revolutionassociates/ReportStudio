@@ -1,6 +1,4 @@
 using System.Text;
-using PdfSharp.Pdf;
-using PdfSharp.Pdf.IO;
 using ReportStudio.Core.Model;
 using ReportStudio.Export;
 using Xunit;
@@ -24,11 +22,10 @@ public class PdfSecurityTests
 
     private static int PageCount(byte[] pdf, string? password)
     {
-        using var stream = new MemoryStream(pdf);
         using var doc = password == null
-            ? PdfReader.Open(stream, PdfDocumentOpenMode.Import)
-            : PdfReader.Open(stream, password, PdfDocumentOpenMode.Import);
-        return doc.PageCount;
+            ? UglyToad.PdfPig.PdfDocument.Open(pdf)
+            : UglyToad.PdfPig.PdfDocument.Open(pdf, new UglyToad.PdfPig.ParsingOptions { Passwords = new[] { password } });
+        return doc.NumberOfPages;
     }
 
     [Fact]

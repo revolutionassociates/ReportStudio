@@ -1,6 +1,6 @@
 using System.Drawing;
 using System.Drawing.Text;
-using PdfSharp.Fonts;
+using ReportStudio.Export.Pdf;
 
 namespace ReportStudio.Export;
 
@@ -42,7 +42,7 @@ public static class FontCatalog
     {
         Initialize();
         lock (Gate) LoadDirectory(directory);
-        TryInstallPdfResolver();
+        PdfFontProvider.Reset();                   // a family that fell back to the default may exist now
     }
 
     /// <summary>A catalog family (e.g. Ubuntu) for GDI+, or null when it was not loaded.</summary>
@@ -65,13 +65,6 @@ public static class FontCatalog
     }
 
     internal static string Key(string family, bool bold, bool italic) => $"{family}|{(bold ? "b" : "")}{(italic ? "i" : "")}";
-
-    /// <summary>Makes PDFsharp read fonts from the catalog (when it has any and no other resolver is set).</summary>
-    internal static void TryInstallPdfResolver()
-    {
-        if (HasFonts && (GlobalFontSettings.FontResolver == null || GlobalFontSettings.FontResolver is CatalogFontResolver))
-            GlobalFontSettings.FontResolver = new CatalogFontResolver();
-    }
 
     private static void LoadDirectory(string directory)
     {
@@ -96,24 +89,5 @@ public static class FontCatalog
                 // an unreadable or damaged font file is skipped; the report falls back to another font
             }
         }
-    }
-}
-
-/// <summary>PDFsharp font resolver backed by <see cref="FontCatalog"/>.</summary>
-internal sealed class CatalogFontResolver : IFontResolver
-{
-    public FontResolverInfo? ResolveTypeface(string familyName, bool isBold, bool isItalic)
-    {
-        // A font that is not in the catalog is drawn in the default family rather than failing the export.
-        var family = FontCatalog.GetFace(familyName, isBold, isItalic) != null ? familyName : FontCatalog.DefaultFamily;
-        if (FontCatalog.GetFace(family, isBold, isItalic) == null) return null;
-        return new FontResolverInfo(FontCatalog.Key(family, isBold, isItalic));
-    }
-
-    public byte[]? GetFont(string faceName)
-    {
-        var parts = faceName.Split('|');
-        var flags = parts.Length > 1 ? parts[1] : "";
-        return FontCatalog.GetFace(parts[0], flags.Contains('b'), flags.Contains('i'));
     }
 }

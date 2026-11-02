@@ -1,201 +1,172 @@
-using PdfSharp.Drawing;
-using PdfSharp.Fonts;
-using PdfSharp.Pdf;
+using System.Drawing;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using ReportStudio.Core.Barcodes;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
+using ReportStudio.Export.Pdf;
 
 namespace ReportStudio.Export;
 
-/// <summary>Vector PDF output (selectable text) built with PDFsharp. Page size matches the report page.</summary>
+/// <summary>
+/// Vector PDF output (selectable text), written by ReportStudio's own PDF writer (see the Pdf folder).
+/// Page size matches the report page. Fonts used are embedded as subsets.
+/// </summary>
 public static class PdfExporter
 {
-    private const double PxToPt = 72.0 / 96.0;
-
-    static PdfExporter()
-    {
-        // Fonts from the application's "Fonts" folder (Ubuntu by default) are read as files and embedded in the PDF.
-        // Without any, PDFsharp 6 core uses the installed Windows fonts.
-        FontCatalog.TryInstallPdfResolver();
-        if (GlobalFontSettings.FontResolver == null && OperatingSystem.IsWindows())
-            GlobalFontSettings.UseWindowsFontsUnderWindows = true;
-    }
-
     public static void Export(ReportResult report, string path, PdfOptions? options = null)
     {
-        using var doc = Build(report, options);
-        doc.Save(path);
+        using var stream = File.Create(path);
+        Export(report, stream, options);
     }
 
     public static void Export(ReportResult report, Stream stream, PdfOptions? options = null)
     {
-        using var doc = Build(report, options);
-        doc.Save(stream, closeStream: false);
-    }
-
-    /// <summary>Password and permissions. Must be set after the pages are added and before the file is saved.</summary>
-    private static void ApplySecurity(PdfDocument doc, PdfOptions? options)
-    {
-        if (options == null || !options.NeedsEncryption) return;
-
-        var security = doc.SecuritySettings;
-        security.UserPassword = options.UserPassword ?? "";
-        // Permissions are only enforced when there is an owner password nobody else knows.
-        security.OwnerPassword = string.IsNullOrEmpty(options.OwnerPassword)
-            ? Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(18))
-            : options.OwnerPassword;
-        // PDFsharp 6 encrypts as soon as a password is set (AES 128-bit by default); there is no separate level to choose.
-
-        security.PermitPrint = options.AllowPrint;
-        security.PermitFullQualityPrint = options.AllowPrint;
-        security.PermitExtractContent = options.AllowCopy;
-        security.PermitModifyDocument = options.AllowModify;
-        security.PermitAnnotations = options.AllowModify;
-        security.PermitAssembleDocument = options.AllowModify;
-    }
-
-    private static PdfDocument Build(ReportResult report, PdfOptions? options = null)
-    {
-        var doc = new PdfDocument();
-        doc.Info.Title = report.ReportName;
-
+        var doc = new PdfDocument(report.ReportName);
         foreach (var page in report.Pages)
         {
-            var p = doc.AddPage();
-            p.Width = new XUnit(page.Width * PxToPt);      // doubles convert implicitly to PDFsharp's unit type
-            p.Height = new XUnit(page.Height * PxToPt);
-            using var gfx = XGraphics.FromPdfPage(p);
-            gfx.ScaleTransform(PxToPt);          // draw in report pixels
-            foreach (var item in page.Items) DrawItem(gfx, item);
+            var p = doc.AddPage(page.Width, page.Height);
+            foreach (var item in page.Items) DrawItem(doc, p, item);
         }
-        if (doc.PageCount == 0) doc.AddPage();
-        ApplySecurity(doc, options);
-        return doc;
+        doc.Save(stream, options);
     }
 
-    private static void DrawItem(XGraphics g, RenderedItem it)
+    private static void DrawItem(PdfDocument doc, PdfPage g, RenderedItem it)
     {
-        var rect = new XRect(it.X, it.Y, it.Width, it.Height);
         var back = ColorUtil.Parse(it.BackColor);
         var border = ColorUtil.Parse(it.BorderColor);
+        var ink = ColorUtil.Parse(it.ForeColor) ?? Color.Black;
 
         switch (it.Kind)
         {
             case ItemKind.Line:
-            {
-                var pen = new XPen(ToX(ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black), Math.Max(0.5, it.BorderWidth));
-                g.DrawLine(pen, it.X, it.Y, it.X + it.Width, it.Y + it.Height);
+                g.Line(it.X, it.Y, it.X + it.Width, it.Y + it.Height, ink, Math.Max(0.5, it.BorderWidth));
                 return;
-            }
             case ItemKind.Rectangle:
-                if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
+                if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
                 if (it.BorderWidth > 0)
-                    g.DrawRectangle(new XPen(ToX(border ?? ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black), it.BorderWidth), rect);
+                    g.StrokeRectangle(it.X, it.Y, it.Width, it.Height, border ?? ink, it.BorderWidth);
                 return;
             case ItemKind.Image:
-                DrawImage(g, it, rect);
+                DrawImage(doc, g, it);
                 break;
             case ItemKind.QrCode:
             {
-                if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
+                if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
                 var cells = QrLayout.Rectangles(it.Text, it.QrLevel, it.Width, it.Height);
                 if (cells.Count == 0) break;
 
                 // One filled path so viewers do not show hairline gaps between modules.
-                var path = new XGraphicsPath { FillMode = XFillMode.Winding };
-                foreach (var (x, y, w, h) in cells) path.AddRectangle(new XRect(it.X + x, it.Y + y, w, h));
-                g.DrawPath(new XSolidBrush(ToX(ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black)), path);
+                var shapes = new List<IReadOnlyList<PointF>>();
+                foreach (var (x, y, w, h) in cells)
+                {
+                    float left = (float)(it.X + x), top = (float)(it.Y + y), right = (float)(it.X + x + w), bottom = (float)(it.Y + y + h);
+                    shapes.Add(new[] { new PointF(left, top), new PointF(right, top), new PointF(right, bottom), new PointF(left, bottom) });
+                }
+                g.FillPolygons(shapes, ink, evenOdd: false);
                 break;
             }
             case ItemKind.Barcode:
             {
-                if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
-                var ink = new XSolidBrush(ToX(ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black));
+                if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
                 foreach (var (x, w) in BarcodeLayout.Bars(it.BarcodeType, it.Text, it.Width))
-                    g.DrawRectangle(ink, it.X + x, it.Y, w, it.Height);
+                    g.FillRectangle(it.X + x, it.Y, w, it.Height, ink);
                 break;
             }
             case ItemKind.Text:
-                if (back != null) g.DrawRectangle(new XSolidBrush(ToX(back.Value)), rect);
-                DrawText(g, it, rect);
+                if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
+                DrawText(doc, g, it);
                 break;
         }
 
         if (border != null && it.BorderWidth > 0)
-            g.DrawRectangle(new XPen(ToX(border.Value), it.BorderWidth), rect);
+            g.StrokeRectangle(it.X, it.Y, it.Width, it.Height, border.Value, it.BorderWidth);
     }
 
-    private static void DrawImage(XGraphics g, RenderedItem it, XRect rect)
+    /// <summary>The picture, as large as fits the box with its proportions kept, centred.</summary>
+    private static void DrawImage(PdfDocument doc, PdfPage g, RenderedItem it)
     {
         if (it.Image == null || it.Image.Length == 0) return;
         try
         {
-            using var img = XImage.FromStream(new MemoryStream(it.Image));
-            double ratio = Math.Min(rect.Width / img.PixelWidth, rect.Height / img.PixelHeight);
-            double w = img.PixelWidth * ratio, h = img.PixelHeight * ratio;
-            g.DrawImage(img, rect.X + (rect.Width - w) / 2, rect.Y + (rect.Height - h) / 2, w, h);
+            using var bitmap = new Bitmap(new MemoryStream(it.Image));
+            double ratio = Math.Min(it.Width / bitmap.Width, it.Height / bitmap.Height);
+            double w = bitmap.Width * ratio, h = bitmap.Height * ratio;
+
+            var key = Convert.ToHexString(SHA256.HashData(it.Image));
+            var name = doc.Image(key, () => new Bitmap(bitmap));
+            g.Image(name, it.X + (it.Width - w) / 2, it.Y + (it.Height - h) / 2, w, h);
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or ExternalException)
         {
             // unreadable image: leave the box empty
         }
     }
 
-    private static void DrawText(XGraphics g, RenderedItem it, XRect rect)
+    private static void DrawText(PdfDocument doc, PdfPage g, RenderedItem it)
     {
         if (string.IsNullOrEmpty(it.Text)) return;
+        var rect = new RectangleF((float)it.X, (float)it.Y, (float)it.Width, (float)it.Height);
         if (PdfComplexText.TryDraw(g, it, rect)) return;   // Hindi, Tamil, ...: shaped by GDI+, see PdfComplexText
 
-        var style = XFontStyleEx.Regular;
-        if (it.Bold) style |= XFontStyleEx.Bold;
-        if (it.Italic) style |= XFontStyleEx.Italic;
-        if (it.Underline) style |= XFontStyleEx.Underline;
+        var face = PdfFontProvider.Resolve(it.FontFamily, it.Bold, it.Italic);
+        var font = doc.Font(face);
 
-        // Font size is in points; the graphics unit here is report px, so convert pt -> px.
-        double sizePx = it.FontSize * 96.0 / 72.0;
-        XFont font;
-        try { font = new XFont(it.FontFamily, sizePx, style); }
-        catch (Exception) { font = new XFont("Arial", sizePx, style); }
+        // Font size is in points; the page is drawn in report px, so convert pt -> px.
+        double size = it.FontSize * 96.0 / 72.0;
+        var brush = ColorUtil.Parse(it.ForeColor) ?? Color.Black;
 
-        var brush = new XSolidBrush(ToX(ColorUtil.Parse(it.ForeColor) ?? System.Drawing.Color.Black));
-        var inner = new XRect(rect.X + 2, rect.Y, Math.Max(1, rect.Width - 4), rect.Height);
+        double innerX = it.X + 2, innerWidth = Math.Max(1, it.Width - 4);
+        double innerBottom = it.Y + it.Height;
+        var text = Clean(it.Text);
 
-        var lines = it.WordWrap ? Wrap(g, it.Text, font, inner.Width) : it.Text.Replace("\r", "").Split('\n').ToList();
-        double lineH = font.GetHeight();
-        double total = lines.Count * lineH;
-        double y = it.VAlign switch
+        var lines = it.WordWrap ? Wrap(face, text, size, innerWidth) : text.Split('\n').ToList();
+        double lineHeight = face.LineHeight(size);
+        double total = lines.Count * lineHeight;
+        double top = it.VAlign switch
         {
-            VAlign.Middle => inner.Y + (inner.Height - total) / 2,
-            VAlign.Bottom => inner.Bottom - total,
-            _ => inner.Y
+            VAlign.Middle => it.Y + (it.Height - total) / 2,
+            VAlign.Bottom => innerBottom - total,
+            _ => it.Y
         };
 
         foreach (var raw in lines)
         {
-            var line = it.WordWrap ? raw : Ellipsize(g, raw, font, inner.Width);
-            double w = g.MeasureString(line, font).Width;
+            var line = it.WordWrap ? raw : Ellipsize(face, raw, size, innerWidth);
+            double width = face.Width(line, size);
             double x = it.HAlign switch
             {
-                HAlign.Center => inner.X + (inner.Width - w) / 2,
-                HAlign.Right => inner.Right - w,
-                _ => inner.X
+                HAlign.Center => innerX + (innerWidth - width) / 2,
+                HAlign.Right => innerX + innerWidth - width,
+                _ => innerX
             };
-            g.DrawString(line, font, brush, new XPoint(x, y), XStringFormats.TopLeft);
-            y += lineH;
+            double baseline = top + face.BaselineOffset(size);
+            g.Text(font, size, x, baseline, line, brush);
+            if (it.Underline && line.Length > 0)
+                g.Line(x, baseline + size * 0.12, x + width, baseline + size * 0.12, brush, Math.Max(0.5, size / 18));
+            top += lineHeight;
         }
     }
 
+    /// <summary>Line breaks become \n, tabs become spaces, other control characters are dropped.</summary>
+    private static string Clean(string text)
+    {
+        var chars = text.Replace("\r\n", "\n").Replace('\r', '\n').Replace('\t', ' ')
+            .Where(ch => ch == '\n' || !char.IsControl(ch));
+        return new string(chars.ToArray());
+    }
+
     /// <summary>Greedy word wrap using real glyph metrics.</summary>
-    private static List<string> Wrap(XGraphics g, string text, XFont font, double maxWidth)
+    private static List<string> Wrap(TrueTypeFont font, string text, double size, double maxWidth)
     {
         var result = new List<string>();
-        foreach (var paragraph in text.Replace("\r", "").Split('\n'))
+        foreach (var paragraph in text.Split('\n'))
         {
             var line = "";
             foreach (var word in paragraph.Split(' '))
             {
                 var candidate = line.Length == 0 ? word : line + " " + word;
-                if (line.Length > 0 && g.MeasureString(candidate, font).Width > maxWidth)
+                if (line.Length > 0 && font.Width(candidate, size) > maxWidth)
                 {
                     result.Add(line);
                     line = word;
@@ -207,13 +178,11 @@ public static class PdfExporter
         return result;
     }
 
-    private static string Ellipsize(XGraphics g, string text, XFont font, double maxWidth)
+    private static string Ellipsize(TrueTypeFont font, string text, double size, double maxWidth)
     {
-        if (g.MeasureString(text, font).Width <= maxWidth) return text;
-        while (text.Length > 1 && g.MeasureString(text + "…", font).Width > maxWidth)
+        if (font.Width(text, size) <= maxWidth) return text;
+        while (text.Length > 1 && font.Width(text + "…", size) > maxWidth)
             text = text.Substring(0, text.Length - 1);
         return text + "…";
     }
-
-    private static XColor ToX(System.Drawing.Color c) => XColor.FromArgb(c.A, c.R, c.G, c.B);
 }

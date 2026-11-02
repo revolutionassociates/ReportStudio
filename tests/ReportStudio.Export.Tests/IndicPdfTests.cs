@@ -1,5 +1,4 @@
 using System.Text;
-using PdfSharp.Pdf.IO;
 using ReportStudio.Core.Model;
 using ReportStudio.Core.Text;
 using ReportStudio.Export;
@@ -28,9 +27,8 @@ public class IndicPdfTests
 
     private static int PageCount(byte[] pdf)
     {
-        using var stream = new MemoryStream(pdf);
-        using var doc = PdfReader.Open(stream, PdfDocumentOpenMode.Import);
-        return doc.PageCount;
+        using var doc = UglyToad.PdfPig.PdfDocument.Open(pdf);
+        return doc.NumberOfPages;
     }
 
     [Fact]

@@ -242,6 +242,10 @@ public static class ReportEngine
         private readonly Row _vars = new(StringComparer.OrdinalIgnoreCase);
         private readonly List<VarState> _varStates = new();
 
+        // Groups whose header has printed and whose footer has not yet: they are what a new page continues.
+        private readonly List<(GroupDefinition Group, Row First, List<Row> Rows)> _active = new();
+        private bool _continued;       // true while a header is reprinted on a continuation page
+
         private sealed class VarState
         {
             public VariableDefinition Def { get; }
@@ -360,8 +364,17 @@ public static class ReportEngine
         {
             if (level == _def.Groups.Count)
             {
-                foreach (var row in rows)
+                // Widow control: the last N rows travel to the next page together with the group footer.
+                int keepFooter = level > 0 ? _def.Groups[level - 1].KeepFooterWithRows : 0;
+                for (int k = 0; k < rows.Count; k++)
                 {
+                    var row = rows[k];
+                    if (keepFooter > 0 && rows.Count > keepFooter && k == rows.Count - keepFooter)
+                    {
+                        double need = BandHeight(_def.Groups[level - 1].Footer, rows[rows.Count - 1], rows);
+                        for (int t = k; t < rows.Count; t++) need += BandHeight(_def.Detail, rows[t], rows);
+                        KeepOnPage(need);
+                    }
                     _currentRow = row;
                     _rowNumber++;
                     RenderBand(_def.Detail, row, rows, accumulate: true);
@@ -380,15 +393,95 @@ public static class ReportEngine
 
                 if ((group.StartNewPage || group.RestartPageNumbers) && _pageHasBody)
                     NewPage(restartNumbering: group.RestartPageNumbers);
+
+                // Keep-together and orphan control decide before anything of the group prints (and before its
+                // variables reset, so the page that ends here still shows the previous group's values).
+                if (group.KeepTogether) KeepOnPage(MeasureGroup(level, partition));
+                else if (group.KeepHeaderWithRows > 0) KeepOnPage(LeadHeight(level, partition, group.KeepHeaderWithRows));
+
                 _currentRow = partition[0];
                 int groupLevel = level + 1;
                 ResetVariables(v => v.Reset == VariableReset.Group && v.ResetGroup == groupLevel);
                 RenderBand(group.Header, partition[0], partition);
+                _active.Add((group, partition[0], partition));
                 RenderLevel(level + 1, partition);
                 _currentRow = partition[partition.Count - 1];
                 RenderBand(group.Footer, partition[partition.Count - 1], partition);
+                _active.RemoveAt(_active.Count - 1);
                 i = j;
             }
+        }
+
+        // ---- keeping things together ----------------------------------------------------------
+
+        /// <summary>The body height of an empty page: the room a block has to fit into to be worth moving.</summary>
+        private double PageCapacity => BodyBottom - (_def.Page.MarginTop + _def.PageHeader.Height);
+
+        /// <summary>Starts a new page when a block of this height does not fit here but would fit on a page of its own.</summary>
+        private void KeepOnPage(double need)
+        {
+            if (_pageHasBody && _y + need > BodyBottom && need <= PageCapacity) NewPage();
+        }
+
+        private double BandHeight(Band band, Row row, List<Row> scope)
+        {
+            Evaluate(band, row, scope, out double height);
+            return Math.Max(0, height);
+        }
+
+        private List<List<Row>> Partitions(GroupDefinition group, List<Row> rows)
+        {
+            var result = new List<List<Row>>();
+            int i = 0;
+            while (i < rows.Count)
+            {
+                var key = EvalKey(group.Expression, rows[i]);
+                int j = i + 1;
+                while (j < rows.Count && Expr.Compare(key, EvalKey(group.Expression, rows[j])) == 0) j++;
+                result.Add(rows.GetRange(i, j - i));
+                i = j;
+            }
+            return result;
+        }
+
+        /// <summary>The height of one group instance: its header, everything inside it and its footer.</summary>
+        private double MeasureGroup(int level, List<Row> partition)
+        {
+            var group = _def.Groups[level];
+            double height = BandHeight(group.Header, partition[0], partition)
+                          + BandHeight(group.Footer, partition[partition.Count - 1], partition);
+            if (level + 1 == _def.Groups.Count)
+            {
+                foreach (var row in partition)
+                {
+                    height += BandHeight(_def.Detail, row, partition);
+                    if (height > PageCapacity) break;      // too tall to keep on one page, so the exact figure does not matter
+                }
+            }
+            else
+            {
+                foreach (var inner in Partitions(_def.Groups[level + 1], partition))
+                {
+                    height += MeasureGroup(level + 1, inner);
+                    if (height > PageCapacity) break;
+                }
+            }
+            return height;
+        }
+
+        /// <summary>The header, the headers of the inner groups that start with it, and the first n detail rows.</summary>
+        private double LeadHeight(int level, List<Row> partition, int rowsToKeep)
+        {
+            double height = BandHeight(_def.Groups[level].Header, partition[0], partition);
+            var here = partition;
+            for (int l = level + 1; l < _def.Groups.Count; l++)
+            {
+                var first = Partitions(_def.Groups[l], here)[0];
+                height += BandHeight(_def.Groups[l].Header, first[0], first);
+                here = first;
+            }
+            foreach (var row in here.Take(rowsToKeep)) height += BandHeight(_def.Detail, row, here);
+            return height;
         }
 
         private object? EvalKey(string expression, Row row)
@@ -416,6 +509,14 @@ public static class ReportEngine
             var headerRow = _rows.Count > 0 ? _rows[0] : _emptyRow;
             if (first) PlaceBand(_def.ReportHeader, headerRow, _rows);
             PlaceBand(_def.PageHeader, headerRow, _rows);
+
+            // A group that carries on from the previous page prints its header again ("continued").
+            foreach (var open in _active.Where(a => a.Group.RepeatHeader).ToList())
+            {
+                _continued = true;
+                try { PlaceBand(open.Group.Header, open.First, open.Rows); }
+                finally { _continued = false; }
+            }
         }
 
         private void EndPage()
@@ -486,6 +587,8 @@ public static class ReportEngine
             var ctx = Ctx(row, scope);
             var result = new List<RenderedItem>();
             height = band.Height;
+            // Space handed back by shrunk elements: where it sits (across, and from where to where down the band).
+            var gaps = new List<(double Left, double Right, double Start, double End)>();
 
             foreach (var item in band.Items)
             {
@@ -542,11 +645,53 @@ public static class ReportEngine
                     continue;
                 }
 
+                // Suppress if blank: nothing prints. With can shrink the freed height is handed to the elements below.
+                if ((item.SuppressIfBlank || item.CanShrink) && IsBlank(r))
+                {
+                    if (item.CanShrink) gaps.Add((r.X, r.X + item.Width, item.Y, item.Y + item.Height));
+                    continue;
+                }
+
                 // a barcode's box keeps its designed height even though its bars are shorter than the caption leaves room for
                 height = Math.Max(height, item.Y + (item.Kind == ItemKind.Barcode ? item.Height : r.Height));
                 result.Add(r);
             }
+
+            if (gaps.Count > 0) ShiftUp(result, gaps);
+            if (result.Count == 0 && band.SuppressIfBlank) height = 0;
+            else if (band.CanShrink) height = result.Count == 0 ? 0 : Math.Max(0, result.Max(x => x.Y + x.Height));
             return result;
+        }
+
+        /// <summary>True when an element would print nothing: no text, or no picture.</summary>
+        private static bool IsBlank(RenderedItem r) => r.Kind switch
+        {
+            ItemKind.Text or ItemKind.Barcode or ItemKind.QrCode => string.IsNullOrWhiteSpace(r.Text),
+            ItemKind.Image => r.Image == null || r.Image.Length == 0,
+            _ => false
+        };
+
+        /// <summary>
+        /// Moves each element up by the freed height above it that overlaps it sideways. Freed spans that share the same
+        /// rows (a blank element on the left and another on the right) count once, spans one above the other add up.
+        /// </summary>
+        private static void ShiftUp(List<RenderedItem> items, List<(double Left, double Right, double Start, double End)> gaps)
+        {
+            foreach (var item in items)
+            {
+                var spans = gaps
+                    .Where(g => g.End <= item.Y + 0.01 && item.X < g.Right && item.X + item.Width > g.Left)
+                    .OrderBy(g => g.Start).ToList();
+
+                double shift = 0, reach = double.MinValue;
+                foreach (var g in spans)
+                {
+                    double from = Math.Max(g.Start, reach);
+                    if (g.End > from) shift += g.End - from;
+                    reach = Math.Max(reach, g.End);
+                }
+                item.Y -= shift;
+            }
         }
 
         /// <summary>
@@ -951,6 +1096,7 @@ public static class ReportEngine
             Scope = scope,
             Parameters = _parameters,
             Variables = _vars,
+            Continued = _continued,
             PageNumber = _sectionPage,
             TotalPages = _sectionTotals != null && _sectionTotals.TryGetValue(_section, out var total) ? total : _sectionPage,
             RowNumber = _rowNumber,

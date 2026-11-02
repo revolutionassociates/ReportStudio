@@ -110,6 +110,8 @@ public class ReportDefinition
         {
             var g = Groups[i];
             g.TopN = Math.Max(0, g.TopN);
+            g.KeepHeaderWithRows = Math.Max(0, g.KeepHeaderWithRows);
+            g.KeepFooterWithRows = Math.Max(0, g.KeepFooterWithRows);
             g.Header.Kind = BandKind.GroupHeader;
             g.Footer.Kind = BandKind.GroupFooter;
             g.Header.Name = $"Group Header {i + 1}";
@@ -145,6 +147,12 @@ public class Band
     public BandKind Kind { get; set; }
     public string Name { get; set; } = "";
     public double Height { get; set; } = 24;
+
+    /// <summary>The band is not printed at all when nothing in it prints (every element is hidden, blank or suppressed).</summary>
+    public bool SuppressIfBlank { get; set; }
+
+    /// <summary>The band is only as tall as what prints in it, after elements have moved up (see ReportItem.CanShrink).</summary>
+    public bool CanShrink { get; set; }
 
     [Browsable(false)]
     public List<ReportItem> Items { get; set; } = new();
@@ -186,6 +194,30 @@ public class GroupDefinition
 
     /// <summary>Keep only the first N instances after ordering (Top 10 customers). 0 = all. Totals above count only those kept.</summary>
     public int TopN { get; set; }
+
+    /// <summary>
+    /// Keep each instance of this group on one page: when it does not fit in the space left, it starts on a new page.
+    /// A group taller than a whole page flows as usual.
+    /// </summary>
+    public bool KeepTogether { get; set; }
+
+    /// <summary>
+    /// The header is never left alone at the bottom of a page: it moves to the next page unless this many detail rows
+    /// (and the headers of inner groups) fit after it. 0 = off.
+    /// </summary>
+    public int KeepHeaderWithRows { get; set; }
+
+    /// <summary>
+    /// The footer is never left alone at the top of a page: this many of the last detail rows move to the next page
+    /// together with it. 0 = off. Applies to the group nearest the detail rows.
+    /// </summary>
+    public int KeepFooterWithRows { get; set; }
+
+    /// <summary>
+    /// When an instance of this group continues on a new page, print its header again at the top of that page.
+    /// In the header, {Continued} is true on those repeats, e.g. IIf(Continued, '(continued)', '').
+    /// </summary>
+    public bool RepeatHeader { get; set; }
 
     public Band Header { get; set; } = new() { Kind = BandKind.GroupHeader, Height = 26 };
     public Band Footer { get; set; } = new() { Kind = BandKind.GroupFooter, Height = 26 };

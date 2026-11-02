@@ -1,9 +1,9 @@
 using System.Collections.Concurrent;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using PdfSharp.Drawing;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Text;
+using ReportStudio.Export.Pdf;
 
 namespace ReportStudio.Export;
 
@@ -38,7 +38,7 @@ public static class PdfComplexText
     }
 
     /// <summary>True when the text was drawn here; false means the caller draws it the normal way.</summary>
-    internal static bool TryDraw(XGraphics g, RenderedItem it, XRect rect)
+    internal static bool TryDraw(PdfPage page, RenderedItem it, RectangleF rect)
     {
         var script = ComplexScript.Detect(it.Text);
         var family = FindFamily(script);
@@ -52,7 +52,7 @@ public static class PdfComplexText
         if (it.Underline) drawn |= FontStyle.Underline;
 
         float em = (float)(it.FontSize * 96.0 / 72.0);
-        var inner = new RectangleF((float)rect.X + 2, (float)rect.Y, (float)Math.Max(1, rect.Width - 4), (float)rect.Height);
+        var inner = new RectangleF(rect.X + 2, rect.Y, Math.Max(1, rect.Width - 4), rect.Height);
 
         using var format = GdiPageRenderer.CreateFormat(it);
         using var path = new GraphicsPath(FillMode.Winding);
@@ -62,28 +62,28 @@ public static class PdfComplexText
         using var matrix = new Matrix();
         path.Flatten(matrix, 0.05f);                                          // curves become short lines
 
-        var outline = new XGraphicsPath { FillMode = XFillMode.Winding };
+        var outline = new List<IReadOnlyList<PointF>>();
         var points = path.PathPoints;
         var types = path.PathTypes;
-        var current = new List<XPoint>();
+        var current = new List<PointF>();
         for (int i = 0; i < points.Length; i++)
         {
             if ((types[i] & 0x07) == 0 && current.Count > 0)                  // a new contour starts
             {
-                outline.AddPolygon(current.ToArray());
+                outline.Add(current.ToArray());
                 current.Clear();
             }
-            current.Add(new XPoint(points[i].X, points[i].Y));
+            current.Add(points[i]);
             if ((types[i] & 0x80) != 0)                                       // this point closes the contour
             {
-                outline.AddPolygon(current.ToArray());
+                outline.Add(current.ToArray());
                 current.Clear();
             }
         }
-        if (current.Count > 0) outline.AddPolygon(current.ToArray());
+        if (current.Count > 0) outline.Add(current.ToArray());
 
-        var colour = ColorUtil.Parse(it.ForeColor) ?? Color.Black;
-        g.DrawPath(new XSolidBrush(XColor.FromArgb(colour.A, colour.R, colour.G, colour.B)), outline);
+        // Winding rule, like the GDI+ path it came from: letters with holes keep them.
+        page.FillPolygons(outline, ColorUtil.Parse(it.ForeColor) ?? Color.Black, evenOdd: false);
         return true;
     }
 }

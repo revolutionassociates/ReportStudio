@@ -14,7 +14,7 @@ It is independent of the Revolution HRMS project, which uses it as a library (se
 | Data | Host-supplied rows (default for embedding); SQL Server, MySQL/MariaDB, PostgreSQL through the optional `ReportStudio.Data` project |
 | Layout | Report/page header and footer, detail, nested groups, per-group page numbering |
 | Elements | Text, line, box, image, barcode (Code 128, Code 39), QR code, sub-report, cross-tab |
-| Expressions | Fields, parameters, arithmetic, comparison, `IIf`, text/date functions, aggregates, `AmountInWords`, page numbers |
+| Expressions | Fields, parameters, arithmetic, comparison, `IIf`, text/date functions, aggregates, range functions (`MonthStart`, `FinancialYear`, `Bucket`, `Range`), `AmountInWords`, page numbers, report variables |
 | Formats | Indian grouping (lakh/crore), `dd-MM-yyyy`, rupee symbol, away-from-zero money rounding |
 | Fonts | Ubuntu by default, embedded in PDF |
 | Export | PDF (vector), Excel (.xlsx), Word (.docx), images (PNG, JPEG, BMP, TIFF), print |
@@ -55,7 +55,7 @@ Tests: `ReportStudio.Tests` (engine, runs anywhere) and `ReportStudio.Export.Tes
    ReportResult  =  pages of RenderedItem (absolute positions, resolved text)
         │
    ├── GdiPageRenderer  → screen preview, print, PNG/JPEG/BMP/TIFF
-   ├── PdfExporter      → vector PDF via PDFsharp, fonts embedded
+   ├── PdfExporter      → vector PDF from our own writer (Export/Pdf), fonts embedded as subsets
    └── GridBuilder → ExcelExporter / WordExporter   (tables, numbers stay numbers)
 ```
 
@@ -167,7 +167,7 @@ employee with a long statement prints "Page 2 of 3". Each page records its secti
 
 | Format | Approach | Notes |
 |---|---|---|
-| PDF | PDFsharp vector drawing, own word-wrap | Selectable text; fonts embedded; page size = report page; barcode/QR as vector shapes |
+| PDF | Own PDF writer (Export/Pdf): vector drawing, own word-wrap, TrueType subsetting | Selectable text; fonts embedded; page size = report page; barcode/QR as vector shapes |
 | Excel | OpenXML; band lines become rows, left edges become columns | Numbers stay numbers with Indian number formats; dates `dd-mm-yyyy`; barcode/QR bars are not carried (their caption text is) |
 | Word | OpenXML; borderless table keeping column layout | Editable, not pixel-identical |
 | HTML | One self-contained `.html`: a sheet per page, absolutely positioned elements, images as data URIs, barcode/QR as inline SVG, no scripts | Text stays selectable; fonts are not embedded (falls back to Segoe UI / Arial); prints one report page per sheet |
@@ -184,7 +184,7 @@ default for new items and the fallback for an unknown font.
 
 **PDF protection.** `PdfOptions` sets a password to open (`UserPassword`) and switches off printing, copying or editing.
 Restrictions only hold when an owner password nobody else knows is set; if none is given a random one is generated and
-discarded. PDFsharp 6 encrypts with AES 128-bit by default; passwords should be plain Latin-1 characters.
+discarded. The writer encrypts with AES 128-bit (standard security handler V4/R4); passwords should be plain Latin-1 characters.
 
 **Headless.** `ReportRunner.ToPdf` / `ToExcel` take a definition, parameters and rows and return bytes, with no window.
 They force Host mode, so a file cannot make a headless run touch a database.
@@ -217,9 +217,13 @@ refresh after an intended change. The image tests need the Ubuntu fonts in `font
 
 ## 12. Status and known limitations
 
-* **The code has been written without a compiler.** The first CI run will show compile errors to fix (PDFsharp calls and
+* **The code has been written without a compiler.** The first CI run will show compile errors to fix (the PDF writer and
   the colour-editor type name are the likeliest). The QR encoder was checked against a Python reference decoded with OpenCV;
   the barcode tables were checked structurally.
+* **PDF library.** PDFsharp 6.5 is AGPL/commercial with a runtime licence check (the CI failed with `PdfSharpLicenseException`),
+  so ReportStudio writes PDFs itself (`Export/Pdf`: object model, TrueType subsetting, Type0 fonts with ToUnicode, AES-128).
+  Tests read the files back with PdfPig (Apache-2.0, tests only). Limits: no kerning, a character missing from a font prints
+  as that font's missing-glyph box (no per-character fallback), PostScript-outline (OTTO) and .ttc fonts are not supported.
 * The Ubuntu font files must be added to `fonts/` by hand (licence included); until then image tests fail on purpose.
 * Excel/Word export is structural (rows and columns), so overlapping or free-floating elements are approximated.
   Negative amounts of a lakh or more use Western grouping in Excel.
@@ -248,9 +252,9 @@ Named connections with encrypted credentials (database mode) stay on hold until 
 17. Conditional formatting (file format + engine) — **done** (`ReportItem.Rules`, each a `FormatRule`: Condition plus optional ForeColor, BackColor, BorderColor and Bold/Italic/Underline true/false. Every true rule applies in order, so a later one wins; empty settings are left alone; conditions can use fields, variables and parameters; a bad condition is a warning and the item keeps its design. Only the printed copy changes. Edited in the .rsr file for now; the designer dialog comes with items 23-26)
 18. Record filter (selection expression) — **done** (`ReportDefinition.Filter`, e.g. `Status == 'Active' && Amount > @Min`; applied before sorting, grouping and totals, so everything counts only the kept rows and a group with no kept rows does not print; works in sub-reports too; the caller's rows are not changed; a row the filter cannot be worked out for is left out and one warning is given. Edited in the .rsr file for now; the report settings dialog gets a box with items 23-26)
 19. Sort groups by their total, Top-N — **done** (per group: `SortExpression` such as `Sum(Amount)`, `SortDescending`, `TopN`. Done on the rows before layout, so every total, including the report footer, counts only the kept groups; ties keep the group-key order; works for inner groups inside each outer group; a bad sort expression is a warning and the key order stays. Edited in the .rsr file for now; the group dialog gets boxes with items 23-26)
-20. Group by ranges (date by month, number by bucket)
-21. Keep-together, widow control, repeat group header on a continued group
-22. Can-shrink and suppress-if-blank
+20. Group by ranges (date by month, number by bucket) — **done** (done as expression functions, so they work in any expression: group, sort, filter, rule, cross-tab. Dates: `MonthStart`, `QuarterStart`, `YearStart`, `WeekStart` (Monday), `FinancialYear` (Indian April-March, "2025-26"). Numbers: `Bucket(x, size)` = lower end of equal-sized ranges; `Range(x, l1, l2, ...)` = lower limit of your own ranges (null below the first); `RangeLabel(x, l1, l2, ...)` = "Below 1,000" / "1,000 to below 5,000" / "5,000 and above" for headings. Group by `Range(...)`, show `RangeLabel(...)`, so groups sort in range order)
+21. Keep-together, widow control, repeat group header on a continued group — **done** (per group: `KeepTogether` (a group that would be split starts on a new page, unless it is taller than a page), `KeepHeaderWithRows` N (header never alone at the bottom: it needs N detail rows after it), `KeepFooterWithRows` N (footer never alone at the top: the last N rows travel with it; for the group next to the detail rows), `RepeatHeader` (header printed again on each continuation page; `{Continued}` is true on the repeats, e.g. `{Name + IIf(Continued, ' (cont)', '')}`). All default off, so existing reports lay out as before. Edited in the .rsr file for now; the group dialog gets tick boxes with items 23-26)
+22. Can-shrink and suppress-if-blank — **done** (elements: `SuppressIfBlank` = a blank element is not printed (no box, fill or border) and its space stays; `CanShrink` = a blank element also gives up its height, so elements below it that overlap it sideways move up (blank lines stacked above add up; blank lines side by side count once). Blank = no text, or no picture; spaces count as blank; an element with content keeps its designed height. Bands: `SuppressIfBlank` = a band in which nothing prints takes no room, `CanShrink` = the band is only as tall as what prints after the moves. All off by default. Page footers keep their designed position. Engine rules (16-22) are complete)
 
 **Stage 3 — Designer support for stage 2** (needs 16–22)
 23. Expression editor dialog with function list

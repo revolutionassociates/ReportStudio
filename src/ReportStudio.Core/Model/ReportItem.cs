@@ -44,6 +44,13 @@ public class ReportItem
     [Category("Content"), Description("When true the element grows downward to fit wrapped text.")]
     public bool CanGrow { get; set; }
 
+    [Category("Content"), Description("Do not print the element when its text is empty (no box, fill or border). The space stays; use Can shrink to close it.")]
+    public bool SuppressIfBlank { get; set; }
+
+    [Category("Content"), Description("When the element is empty (no text or no picture) it gives up its height, and elements below it " +
+                                      "that overlap it sideways move up. An element with content keeps its designed height.")]
+    public bool CanShrink { get; set; }
+
     [Category("Content"), Description("Optional expression; the element is printed only when it evaluates to true.")]
     public string VisibleWhen { get; set; } = "";
 
