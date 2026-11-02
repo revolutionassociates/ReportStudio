@@ -24,7 +24,7 @@ public class PdfSecurityTests
     {
         using var doc = password == null
             ? UglyToad.PdfPig.PdfDocument.Open(pdf)
-            : UglyToad.PdfPig.PdfDocument.Open(pdf, new UglyToad.PdfPig.ParsingOptions { Passwords = new[] { password } });
+            : UglyToad.PdfPig.PdfDocument.Open(pdf, new UglyToad.PdfPig.ParsingOptions { Passwords = new List<string> { password } });
         return doc.NumberOfPages;
     }
 

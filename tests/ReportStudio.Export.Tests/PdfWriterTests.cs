@@ -175,7 +175,7 @@ public class PdfWriterTests
         var bytes = Document("Secret salary 99,000", new PdfOptions { UserPassword = "open-sesame" });
 
         Assert.Throws<PdfDocumentEncryptedException>(() => UglyToad.PdfPig.PdfDocument.Open(bytes));
-        using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes, new ParsingOptions { Passwords = new[] { "open-sesame" } });
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes, new ParsingOptions { Passwords = new List<string> { "open-sesame" } });
         AssertText(pdf, "Secret salary 99,000");
     }
 
@@ -193,7 +193,7 @@ public class PdfWriterTests
     {
         var bytes = Document("Owner view", new PdfOptions { UserPassword = "user", OwnerPassword = "owner" });
 
-        using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes, new ParsingOptions { Passwords = new[] { "owner" } });
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(bytes, new ParsingOptions { Passwords = new List<string> { "owner" } });
         AssertText(pdf, "Owner view");
     }
 
