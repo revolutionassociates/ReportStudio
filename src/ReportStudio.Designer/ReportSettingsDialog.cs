@@ -27,6 +27,9 @@ public sealed class ReportSettingsDialog : Form
     private readonly DataGridView _params = NewGrid();
     private readonly DataGridView _groups = NewGrid();
     private readonly TextBox _sort = new() { Multiline = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical };
+    private readonly DataGridView _vars = NewGrid();
+    private readonly TextBox _filter = new() { Dock = DockStyle.Top, Font = new Font("Consolas", 10f) };
+    private readonly Label _filterStatus = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
     private readonly TextBox _name = new() { Width = 300 };
     private readonly ComboBox _pageSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly NumericUpDown _mL = NewMargin(), _mR = NewMargin(), _mT = NewMargin(), _mB = NewMargin();
@@ -53,6 +56,7 @@ public sealed class ReportSettingsDialog : Form
         tabs.TabPages.Add(BuildDataTab());
         tabs.TabPages.Add(BuildParametersTab());
         tabs.TabPages.Add(BuildGroupsTab());
+        tabs.TabPages.Add(BuildVariablesTab());
 
         var ok = new Button { Text = "OK", Width = 90 };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
@@ -181,6 +185,116 @@ public sealed class ReportSettingsDialog : Form
         return page;
     }
 
+    private TabPage BuildVariablesTab()
+    {
+        var page = new TabPage("Variables && filter") { Padding = new Padding(8) };
+
+        _vars.Columns.Add("Name", "Name");
+        _vars.Columns.Add(new DataGridViewComboBoxColumn
+        {
+            Name = "Function", HeaderText = "What it does", ValueType = typeof(VariableFunction),
+            DataSource = Enum.GetValues<VariableFunction>(), FlatStyle = FlatStyle.Flat
+        });
+        _vars.Columns.Add("Expression", "Value of each row");
+        _vars.Columns.Add("Condition", "Only rows where (optional)");
+        _vars.Columns.Add("Initial", "Start value (optional)");
+        _vars.Columns.Add(new DataGridViewComboBoxColumn
+        {
+            Name = "Reset", HeaderText = "Start again on", ValueType = typeof(VariableReset),
+            DataSource = Enum.GetValues<VariableReset>(), FlatStyle = FlatStyle.Flat
+        });
+        _vars.Columns.Add("ResetGroup", "Group level");
+
+        var varBox = new GroupBox
+        {
+            Text = "Variables: running totals and shared values, shown anywhere as {Name}",
+            Dock = DockStyle.Fill, Padding = new Padding(6)
+        };
+        varBox.Controls.Add(_vars);
+        varBox.Controls.Add(new Label
+        {
+            Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 6, 0, 0),
+            Text = "Examples: RunningTotal = Sum of Amount.  Balance = Assign \"Balance + Credit - Debit\".  " +
+                   "Group level 1 is the outermost group; it only matters when 'Start again on' is Group."
+        });
+
+        var filterBox = new GroupBox
+        {
+            Text = "Record filter: only rows where this is true are used (empty = all rows)",
+            Dock = DockStyle.Top, Height = 92, Padding = new Padding(8, 6, 8, 6)
+        };
+        var filterRow = new Panel { Dock = DockStyle.Top, Height = 26 };
+        _filter.Dock = DockStyle.Fill;
+        var filterFx = new Button { Text = "ƒx…", Dock = DockStyle.Right, Width = 64 };
+        filterFx.Click += (_, _) => { if (EditExpression("Record filter", _filter.Text) is { } edited) _filter.Text = edited; };
+        filterRow.Controls.Add(_filter);
+        filterRow.Controls.Add(filterFx);
+        filterBox.Controls.Add(_filterStatus);
+        filterBox.Controls.Add(filterRow);
+        _filter.TextChanged += (_, _) => ShowFilterStatus();
+
+        var cellFx = new Button { Text = "Edit the selected value / condition / start value with the expression editor…", AutoSize = true };
+        cellFx.Click += (_, _) => EditSelectedVariableCell();
+        var cellBar = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
+        cellBar.Controls.Add(cellFx);
+        varBox.Controls.Add(cellBar);
+
+        page.Controls.Add(varBox);
+        page.Controls.Add(filterBox);
+        return page;
+    }
+
+    /// <summary>Opens the expression editor; null when the user cancelled.</summary>
+    private string? EditExpression(string title, string current)
+    {
+        using var dlg = new ExpressionEditorDialog(title, current);
+        return dlg.ShowDialog(this) == DialogResult.OK ? dlg.Expression : null;
+    }
+
+    private void EditSelectedVariableCell()
+    {
+        var cell = _vars.CurrentCell;
+        if (cell == null || cell.OwningRow.IsNewRow || cell.ColumnIndex < 2 || cell.ColumnIndex > 4)
+        {
+            MessageBox.Show(this, "Click first on a Value, Condition or Start value cell of a variable.", Text);
+            return;
+        }
+        if (EditExpression(_vars.Columns[cell.ColumnIndex].HeaderText, Convert.ToString(cell.Value) ?? "") is { } edited)
+            cell.Value = edited;
+    }
+
+    private void ShowFilterStatus()
+    {
+        var problem = DefinitionChecks.CheckExpression(_filter.Text);
+        _filterStatus.ForeColor = problem == null ? SystemColors.GrayText : Color.Firebrick;
+        _filterStatus.Text = problem != null ? "Not valid: " + problem
+            : string.IsNullOrWhiteSpace(_filter.Text) ? "Example: Status == 'Active' && Net > 0" : "The expression is valid.";
+    }
+
+    /// <summary>The variables typed in the grid (rows without a name are ignored, like parameters).</summary>
+    private List<VariableDefinition> ReadVariables()
+    {
+        var list = new List<VariableDefinition>();
+        foreach (DataGridViewRow row in _vars.Rows)
+        {
+            if (row.IsNewRow) continue;
+            string Cell(int cell) => (Convert.ToString(row.Cells[cell].Value) ?? "").Trim();
+            if (Cell(0).Length == 0) continue;
+
+            list.Add(new VariableDefinition
+            {
+                Name = Cell(0),
+                Function = row.Cells[1].Value is VariableFunction f ? f : VariableFunction.Sum,
+                Expression = Cell(2),
+                Condition = Cell(3),
+                Initial = Cell(4),
+                Reset = row.Cells[5].Value is VariableReset r ? r : VariableReset.Never,
+                ResetGroup = int.TryParse(Cell(6), out var level) ? level : 1
+            });
+        }
+        return list;
+    }
+
     // ---- load / apply --------------------------------------------------------------------------
 
     private void LoadValues()
@@ -204,6 +318,11 @@ public sealed class ReportSettingsDialog : Form
         foreach (var p in _def.Parameters) _params.Rows.Add(p.Name, p.Prompt, p.Type, p.DefaultValue);
         foreach (var g in _def.Groups) _groups.Rows.Add(g.Expression, g.StartNewPage, g.RestartPageNumbers);
         _sort.Text = string.Join(Environment.NewLine, _def.SortBy);
+
+        _filter.Text = _def.Filter;
+        ShowFilterStatus();
+        foreach (var v in _def.Variables)
+            _vars.Rows.Add(v.Name, v.Function, v.Expression, v.Condition, v.Initial, v.Reset, v.ResetGroup);
     }
 
     private static decimal Clamp(double v) => (decimal)Math.Clamp(v, 0, 400);
@@ -236,7 +355,23 @@ public sealed class ReportSettingsDialog : Form
             });
         }
 
+        // Variables and the filter are checked before anything is stored, so a mistake changes nothing.
+        var newVariables = ReadVariables();
+        int groupCount = _groups.Rows.Cast<DataGridViewRow>()
+            .Count(r => !r.IsNewRow && !string.IsNullOrWhiteSpace(Convert.ToString(r.Cells[0].Value)));
+        var problems = DefinitionChecks.CheckVariables(newVariables, groupCount);
+        var filterProblem = DefinitionChecks.CheckExpression(_filter.Text);
+        if (filterProblem != null) problems.Insert(0, "The record filter is not valid (" + filterProblem + ")");
+        if (problems.Count > 0)
+        {
+            MessageBox.Show(this, string.Join(Environment.NewLine, problems.Take(8)), "Variables && filter",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
         _def.Name = string.IsNullOrWhiteSpace(_name.Text) ? "Untitled Report" : _name.Text.Trim();
+        _def.Filter = _filter.Text.Trim();
+        _def.Variables = newVariables;
         var size = PageSizes[Math.Max(0, _pageSize.SelectedIndex)];
         _def.Page.Width = size.W;
         _def.Page.Height = size.H;

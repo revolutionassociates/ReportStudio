@@ -16,6 +16,10 @@ public class ReportItem
 {
     private const string ColorEditor =
         "ReportStudio.Designer.ColorHexEditor, ReportStudio.Designer";
+    private const string ExpressionEditor =
+        "ReportStudio.Designer.ExpressionUiEditor, ReportStudio.Designer";
+    private const string RulesEditor =
+        "ReportStudio.Designer.RulesUiEditor, ReportStudio.Designer";
     private const string EditorBase =
         "System.Drawing.Design.UITypeEditor, System.Drawing";
 
@@ -51,7 +55,8 @@ public class ReportItem
                                       "that overlap it sideways move up. An element with content keeps its designed height.")]
     public bool CanShrink { get; set; }
 
-    [Category("Content"), Description("Optional expression; the element is printed only when it evaluates to true.")]
+    [Category("Content"), Description("Optional expression; the element is printed only when it evaluates to true."),
+     Editor(ExpressionEditor, EditorBase)]
     public string VisibleWhen { get; set; } = "";
 
     // ---- Appearance ----
@@ -141,7 +146,9 @@ public class ReportItem
     [JsonIgnore, Browsable(false)] public double Bottom => Y + Height;
 
     /// <summary>Conditional formatting: each rule whose condition is true changes colours and font style, in order.</summary>
-    [Browsable(false)]
+    [Category("Appearance"), DisplayName("Conditional formats"),
+     Description("Rules that change colours and font style when a condition is true, e.g. red text when Net < 0. Click ... to edit."),
+     Editor(RulesEditor, EditorBase)]
     public List<FormatRule> Rules { get; set; } = new();
 
     public ReportItem Clone()

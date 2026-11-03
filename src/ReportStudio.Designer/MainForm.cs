@@ -379,6 +379,11 @@ internal sealed class MainForm : Form
         }
         foreach (var p in _def.Parameters) _fields.Items.Add("@" + p.Name);
         foreach (var s in new[] { "Page", "PageCount", "Now", "RowNumber", "Sum(Amount)", "Count()" }) _fields.Items.Add(s);
+
+        // The expression editor offers the same fields and parameters, plus the report's variables.
+        ExpressionEditorContext.Fields = _fields.Items.Cast<object>().Select(o => o.ToString() ?? "")
+            .Where(s => s.Length > 0 && !s.Contains('(') && s is not ("Page" or "PageCount" or "Now" or "RowNumber")).ToList();
+        ExpressionEditorContext.Variables = _def.Variables.Select(v => v.Name).ToList();
     }
 
     private void InsertSelectedField()

@@ -144,7 +144,9 @@ cells, so every export carries it, and the band grows to hold it.
 * **Zoom:** 25 %–400 % with the toolbar or Ctrl + mouse wheel. The canvas works in report pixels and scales at the edges.
 * Properties (font, colours, borders, format, *Visible when*, can-grow, element-specific settings) in the property grid.
 * Undo/redo is snapshot-based, so every edit, including property grid and settings changes, is undoable with no per-command code.
-* Settings dialog: data source and field schema, parameters, groups (start new page, restart page numbers) and sort, page size.
+* Settings dialog: data source and field schema, parameters, groups (start new page, restart page numbers) and sort, page size, variables and the record filter.
+* Expression editor: function list with descriptions, fields/parameters/variables, live validity check.
+* Conditional formatting editor: rules per element, opened from the property grid (*Conditional formats*).
 
 ## 7. Data access and security
 
@@ -257,8 +259,8 @@ Named connections with encrypted credentials (database mode) stay on hold until 
 22. Can-shrink and suppress-if-blank — **done** (elements: `SuppressIfBlank` = a blank element is not printed (no box, fill or border) and its space stays; `CanShrink` = a blank element also gives up its height, so elements below it that overlap it sideways move up (blank lines stacked above add up; blank lines side by side count once). Blank = no text, or no picture; spaces count as blank; an element with content keeps its designed height. Bands: `SuppressIfBlank` = a band in which nothing prints takes no room, `CanShrink` = the band is only as tall as what prints after the moves. All off by default. Page footers keep their designed position. Engine rules (16-22) are complete)
 
 **Stage 3 — Designer support for stage 2** (needs 16–22)
-23. Expression editor dialog with function list
-24. Conditional formatting editor (needs 17 and 23)
+23. Expression editor dialog with function list — **done** (`ExpressionEditorDialog`: text box that says at once whether the expression is valid, the function list by category with signature, description and example (`ExpressionFunctions`, checked against the engine by a test), and the report's fields, parameters and variables; double-click inserts. Opened from the property grid for *Visible when*, and from the settings dialog for the record filter and variable expressions. The settings dialog has a new *Variables && filter* tab, with checks (`DefinitionChecks`) before anything is stored)
+24. Conditional formatting editor (needs 17 and 23) — **done** (*Conditional formats* in the property grid opens `RulesEditorDialog`: list of rules with Add, Delete, Up and Down; each rule has a condition (with the expression editor), text, fill and border colours with a picker and preview, and Bold, Italic and Underline as No change/Yes/No. Rules apply from the top, so a lower rule wins. Checked on OK by `DefinitionChecks.CheckRules`: condition present and valid, colours well formed, the rule changes something. One element at a time)
 25. Alignment guides, grouping, locking, z-order, format painter (independent)
 26. Data preview inside the designer
 
