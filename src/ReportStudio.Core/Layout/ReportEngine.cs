@@ -102,6 +102,7 @@ public static class ReportEngine
         {
             Culture = o.Culture, BaseDirectory = o.BaseDirectory, Measurer = o.Measurer, Now = o.Now,
             SubReports = o.SubReports, DataSets = o.DataSets, SubReportDepth = o.SubReportDepth,
+            ToggledGroups = o.ToggledGroups,
             Rows = rows.Select(ToRow).ToList()
         };
         return Run(def, parameterValues, copy);
