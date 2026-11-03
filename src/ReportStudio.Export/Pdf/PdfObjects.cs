@@ -88,6 +88,11 @@ internal sealed class PdfReal : PdfValue
     public override void Write(PdfOutput output, int objectNumber) => output.Write(PdfFormat.Number(Value));
 }
 
+internal sealed class PdfNull : PdfValue
+{
+    public override void Write(PdfOutput output, int objectNumber) => output.Write("null");
+}
+
 internal sealed class PdfBool : PdfValue
 {
     public bool Value { get; }

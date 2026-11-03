@@ -57,8 +57,8 @@ public sealed class RulesEditorDialog : Form
         var down = new Button { Text = "Down", Width = 64 };
         add.Click += (_, _) => AddRule();
         remove.Click += (_, _) => RemoveRule();
-        up.Click += (_, _) => Move(-1);
-        down.Click += (_, _) => Move(1);
+        up.Click += (_, _) => MoveRule(-1);
+        down.Click += (_, _) => MoveRule(1);
         var listButtons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true };
         listButtons.Controls.AddRange(new Control[] { add, remove, up, down });
         var left = new Panel { Dock = DockStyle.Left, Width = 260, Padding = new Padding(10, 6, 6, 6) };
@@ -141,7 +141,7 @@ public sealed class RulesEditorDialog : Form
         else LoadSelected();
     }
 
-    private void Move(int by)
+    private void MoveRule(int by)
     {
         int i = _list.SelectedIndex, j = i + by;
         if (i < 0 || j < 0 || j >= _rules.Count) return;
@@ -266,7 +266,7 @@ public sealed class RulesEditorDialog : Form
     private static void SetTriState(ComboBox combo, bool? value) =>
         combo.SelectedItem = value == null ? NoChange : value.Value ? Yes : No;
 
-    private static bool? GetTriState(ComboBox combo) => combo.SelectedItem as string switch
+    private static bool? GetTriState(ComboBox combo) => (combo.SelectedItem as string) switch
     {
         Yes => true,
         No => false,

@@ -7,7 +7,7 @@ using ReportStudio.Export;
 
 namespace ReportStudio.Designer;
 
-public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab }
+public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents }
 public enum AlignKind { Left, Right, Top, Bottom, SameWidth, SameHeight }
 
 /// <summary>
@@ -49,6 +49,9 @@ public sealed class DesignCanvas : Control
     private Dictionary<ReportItem, Band?> _origBand = new();   // where each dragged item started (it may change band while dragging)
     private BandBox? _createBox;
     private Rectangle _createRect;
+    private List<Guide> _guides = new();             // alignment guides shown while dragging
+    private Band? _guideBand;                        // the band whose coordinates the horizontal guides use
+    private ReportItem? _formatSource;               // the element whose look the format painter copies
 
     private readonly List<ReportItem> _clipboard = new();
     private readonly Stack<string> _undo = new();
@@ -162,6 +165,15 @@ public sealed class DesignCanvas : Control
     public bool CanRedo => _redo.Count > 0;
 
     /// <summary>Call after anything outside the canvas changed the definition (property grid, dialogs).</summary>
+    /// <summary>Real rows to show instead of {Field} placeholders (requirement 26). Null = show the design text.</summary>
+    [System.ComponentModel.Browsable(false), System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public ReportStudio.Core.Layout.DesignPreview? Preview
+    {
+        get => _preview;
+        set { _preview = value; Invalidate(); }
+    }
+    private ReportStudio.Core.Layout.DesignPreview? _preview;
+
     public void NotifyChanged()
     {
         RecalcLayout();
@@ -244,10 +256,12 @@ public sealed class DesignCanvas : Control
 
     public void DeleteSelection()
     {
-        if (_selection.Count == 0) return;
-        foreach (var item in _selection)
+        // Locked elements stay (and stay selected): unlock them first to delete them.
+        var removable = _selection.Where(i => !i.Locked).ToList();
+        if (removable.Count == 0) return;
+        foreach (var item in removable)
             FindBand(item)?.Items.Remove(item);
-        _selection.Clear();
+        _selection.RemoveAll(i => removable.Contains(i));
         RecalcLayout();
         SelectionChanged?.Invoke(this, EventArgs.Empty);
         Commit();
@@ -270,9 +284,16 @@ public sealed class DesignCanvas : Control
         if (_clipboard.Count == 0) return;
         var band = SelectedBand ?? _def.Detail;
         _selection.Clear();
+        var groupIds = new Dictionary<string, string>();      // a pasted group is a new group, not part of the original
         foreach (var src in _clipboard)
         {
             var copy = src.Clone();
+            if (!string.IsNullOrEmpty(copy.ItemGroup))
+            {
+                if (!groupIds.TryGetValue(copy.ItemGroup, out var fresh))
+                    groupIds[copy.ItemGroup] = fresh = Guid.NewGuid().ToString("N")[..8];
+                copy.ItemGroup = fresh;
+            }
             copy.X += 8; copy.Y += 8;
             band.Items.Add(copy);
             _selection.Add(copy);
@@ -299,7 +320,7 @@ public sealed class DesignCanvas : Control
     {
         if (_selection.Count < 2) return;
         var first = _selection[0];
-        foreach (var it in _selection.Skip(1))
+        foreach (var it in _selection.Skip(1).Where(i => !i.Locked))
         {
             switch (kind)
             {
@@ -322,6 +343,101 @@ public sealed class DesignCanvas : Control
         Invalidate();
         Commit();
         SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    // ================================================================ arranging
+
+    public void BringItemsToFront() => Restack(ItemArrange.BringToFront);
+    public void SendItemsToBack() => Restack(ItemArrange.SendToBack);
+    public void BringItemsForward() => Restack(ItemArrange.BringForward);
+    public void SendItemsBackward() => Restack(ItemArrange.SendBackward);
+
+    /// <summary>Changes the stacking order inside every band the selection touches.</summary>
+    private void Restack(Action<Band, IReadOnlyCollection<ReportItem>> action)
+    {
+        if (_selection.Count == 0) return;
+        foreach (var band in _def.AllBands().Where(b => b.Items.Any(i => _selection.Contains(i))))
+            action(band, _selection);
+        Invalidate();
+        Commit();
+    }
+
+    /// <summary>Groups the selected elements: clicking one selects all, and they move together.</summary>
+    public void GroupSelection()
+    {
+        if (!ItemArrange.Group(_selection)) return;
+        Invalidate();
+        Commit();
+    }
+
+    /// <summary>Releases the selected elements (and so their whole group, which is selected with them) from the group.</summary>
+    public void UngroupSelection()
+    {
+        if (_selection.Count == 0) return;
+        ItemArrange.Ungroup(_selection);
+        Invalidate();
+        Commit();
+    }
+
+    /// <summary>Locks the selected elements, or unlocks them when they are all locked already.</summary>
+    public void ToggleLock()
+    {
+        if (_selection.Count == 0) return;
+        bool lockThem = !_selection.All(i => i.Locked);
+        foreach (var item in _selection) item.Locked = lockThem;
+        Invalidate();
+        Commit();
+        SelectionChanged?.Invoke(this, EventArgs.Empty);      // refreshes the property grid
+    }
+
+    /// <summary>True once an element's look has been picked up with <see cref="CopyFormat"/>.</summary>
+    public bool HasFormat => _formatSource != null;
+
+    /// <summary>Picks up the look (font, colours, border, alignment, number format) of the first selected element.</summary>
+    public void CopyFormat()
+    {
+        if (_selection.Count > 0) _formatSource = _selection[0].Clone();
+    }
+
+    /// <summary>Gives the picked-up look to every selected element.</summary>
+    public void PasteFormat()
+    {
+        if (_formatSource == null || _selection.Count == 0) return;
+        foreach (var item in _selection) ItemArrange.CopyAppearance(_formatSource, item);
+        Invalidate();
+        Commit();
+        SelectionChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// While dragging: snaps the moved elements to the edges and centres of the other elements (and to the page and band
+    /// edges) and remembers the guide lines to draw. Hold Alt to drag freely. Only used when the moved elements share a band.
+    /// </summary>
+    private void ApplyGuides()
+    {
+        _guides = new List<Guide>();
+        var moved = _selection.Where(i => !i.Locked).ToList();
+        if (moved.Count == 0 || (ModifierKeys & Keys.Alt) != 0) return;
+
+        var band = FindBand(moved[0]);
+        if (band == null || moved.Any(i => !ReferenceEquals(FindBand(i), band))) return;
+        _guideBand = band;
+
+        double left = moved.Min(i => i.X), top = moved.Min(i => i.Y), right = moved.Max(i => i.Right), bottom = moved.Max(i => i.Bottom);
+        var box = new Box(left, top, right - left, bottom - top);
+
+        var xTargets = _def.AllBands().SelectMany(b => b.Items).Where(i => !_selection.Contains(i)).Select(Box.Of).ToList();
+        xTargets.Add(new Box(0, 0, _def.Page.ContentWidth, 0));          // left edge, centre and right edge of the page content
+        var yTargets = band.Items.Where(i => !_selection.Contains(i)).Select(Box.Of).ToList();
+        yTargets.Add(new Box(0, 0, 0, band.Height));                     // top, middle and bottom of the band
+
+        var (dx, dy, guides) = ItemArrange.SnapToGuides(box, xTargets, yTargets, Math.Max(1, 4 / _zoom));
+        foreach (var item in moved)
+        {
+            item.X = Math.Max(0, item.X + dx);
+            item.Y = Math.Max(0, item.Y + dy);
+        }
+        _guides = guides;
     }
 
     // ================================================================ layout
@@ -387,6 +503,19 @@ public sealed class DesignCanvas : Control
             using var pen = new Pen(Color.FromArgb(0, 120, 215)) { DashStyle = DashStyle.Dash };
             g.DrawRectangle(pen, _createRect);
         }
+
+        // alignment guides while dragging: vertical across the page, horizontal across the band
+        if (_drag == Drag.Move && _guides.Count > 0 && _guideBand != null && BoxOf(_guideBand) is { } guideBox)
+        {
+            using var pen = new Pen(Color.FromArgb(230, 0, 160), (float)(1 / _zoom)) { DashStyle = DashStyle.Dash };
+            foreach (var line in _guides)
+            {
+                if (line.Vertical)
+                    g.DrawLine(pen, ContentLeft + (float)line.Position, 0, ContentLeft + (float)line.Position, totalH);
+                else
+                    g.DrawLine(pen, PageLeft, guideBox.BodyTop + (float)line.Position, PageLeft + pageW, guideBox.BodyTop + (float)line.Position);
+            }
+        }
     }
 
     private void DrawBand(Graphics g, BandBox box, int pageW)
@@ -415,7 +544,7 @@ public sealed class DesignCanvas : Control
         var ri = new RenderedItem
         {
             Kind = item.Kind, X = r.X, Y = r.Y, Width = item.Width, Height = item.Height,
-            Text = item.Text, FontFamily = item.FontFamily, FontSize = item.FontSize,
+            Text = _preview?.TextFor(item) ?? item.Text, FontFamily = item.FontFamily, FontSize = item.FontSize,
             Bold = item.Bold, Italic = item.Italic, Underline = item.Underline,
             HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
             ForeColor = item.ForeColor, BackColor = item.BackColor,
@@ -424,15 +553,17 @@ public sealed class DesignCanvas : Control
             BarcodeType = item.BarcodeType, QrLevel = item.QrLevel
         };
         // A barcode / QR value written as an expression ({EmpCode}) has no value at design time: show a sample.
-        if (item.Kind == ItemKind.Barcode && item.Text.Contains('{')) ri.Text = "1234567890";
-        if (item.Kind == ItemKind.QrCode && item.Text.Contains('{')) ri.Text = "https://example.com";
-        if (item.Kind is ItemKind.SubReport or ItemKind.CrossTab)
+        if (_preview == null && item.Kind == ItemKind.Barcode && item.Text.Contains('{')) ri.Text = "1234567890";
+        if (_preview == null && item.Kind == ItemKind.QrCode && item.Text.Contains('{')) ri.Text = "https://example.com";
+        if (item.Kind is ItemKind.SubReport or ItemKind.CrossTab or ItemKind.Contents)
         {
             // Their content is only known at run time: show a labelled placeholder.
             using var tint = new SolidBrush(Color.FromArgb(40, 0, 120, 215));
             g.FillRectangle(tint, r.X, r.Y, Math.Max(1, r.Width), Math.Max(1, r.Height));
             using var f = new Font("Segoe UI", 8f, FontStyle.Italic);
-            var caption = item.Kind == ItemKind.CrossTab
+            var caption = item.Kind == ItemKind.Contents
+                ? "[Table of contents: lists every element with an Outline title]"
+                : item.Kind == ItemKind.CrossTab
                 ? "[Cross-tab: " + (string.IsNullOrWhiteSpace(item.CrossRows) ? "(set rows)" : item.CrossRows + " x " + item.CrossColumns) + "]"
                 : "[Sub-report: " + (string.IsNullOrWhiteSpace(item.SubReportPath) ? "(choose a report)" : item.SubReportPath) + "]";
             g.DrawString(caption, f, Brushes.DimGray, r.X + 2, r.Y + 2);
@@ -449,11 +580,20 @@ public sealed class DesignCanvas : Control
             g.DrawString("[Image]", f, Brushes.Gray, r.X + 2, r.Y + 2);
         }
 
+        if (item.Locked)
+        {
+            // a small padlock in the top right corner
+            int lx = r.Right - 12, ly = r.Y + 1;
+            using var lockPen = new Pen(Color.DimGray, 1.5f);
+            g.DrawArc(lockPen, lx + 2, ly, 5, 6, 180, 180);
+            g.FillRectangle(Brushes.DimGray, lx, ly + 4, 9, 6);
+        }
+
         if (!selected) return;
 
         using var pen = new Pen(Color.FromArgb(0, 120, 215), 1.5f);
         g.DrawRectangle(pen, r.X, r.Y, Math.Max(1, r.Width), Math.Max(1, r.Height));
-        if (_selection.Count == 1)
+        if (_selection.Count == 1 && !item.Locked)
             foreach (var hr in GripRects(r).Values)
             {
                 g.FillRectangle(Brushes.White, hr);
@@ -512,7 +652,7 @@ public sealed class DesignCanvas : Control
         }
 
         // resize grip of the single selected item
-        if (_selection.Count == 1)
+        if (_selection.Count == 1 && !_selection[0].Locked)
         {
             var band = FindBand(_selection[0]);
             var owner = band == null ? null : BoxOf(band);
@@ -538,13 +678,18 @@ public sealed class DesignCanvas : Control
         var item = HitItem(e.Location);
         if (item != null)
         {
+            // A grouped element brings its whole group with it.
+            var mates = ItemArrange.ExpandGroups(_def.AllBands(), new[] { item });
             if ((ModifierKeys & Keys.Control) != 0)
             {
-                if (!_selection.Remove(item)) _selection.Add(item);
+                if (_selection.Contains(item)) _selection.RemoveAll(i => mates.Contains(i));
+                else foreach (var mate in mates) if (!_selection.Contains(mate)) _selection.Add(mate);
             }
-            else if (!_selection.Contains(item)) _selection.Clear();
-
-            if (!_selection.Contains(item) && (ModifierKeys & Keys.Control) == 0) _selection.Add(item);
+            else if (!_selection.Contains(item))
+            {
+                _selection.Clear();
+                _selection.AddRange(mates);
+            }
 
             _selectedBand = null;
             if (_selection.Contains(item))
@@ -593,6 +738,7 @@ public sealed class DesignCanvas : Control
                 var target = BoxAt(e.Location)?.Band;
                 foreach (var it in _selection)
                 {
+                    if (it.Locked) continue;
                     var o = _orig[it];
                     var current = FindBand(it);
                     var dest = target ?? current;
@@ -618,6 +764,7 @@ public sealed class DesignCanvas : Control
                     double maxY = Math.Max(0, dest.Height - it.Height);
                     it.Y = Math.Clamp(Snap(homeBox.BodyTop + o.Y + dy - destBox.BodyTop), 0, maxY);
                 }
+                ApplyGuides();
                 break;
             }
 
@@ -648,6 +795,7 @@ public sealed class DesignCanvas : Control
         e = ToDesign(e);
         var drag = _drag;
         _drag = Drag.None;
+        _guides = new List<Guide>();
 
         if (drag == Drag.Create && _createBox != null)
         {
@@ -666,11 +814,12 @@ public sealed class DesignCanvas : Control
                 DesignTool.QrCode => ItemKind.QrCode,
                 DesignTool.SubReport => ItemKind.SubReport,
                 DesignTool.CrossTab => ItemKind.CrossTab,
+                DesignTool.Contents => ItemKind.Contents,
                 _ => ItemKind.Text
             };
-            if (w < 8) w = kind == ItemKind.Line ? 120 : kind == ItemKind.Barcode ? 160 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 300 : kind == ItemKind.CrossTab ? 400 : 100;
+            if (w < 8) w = kind == ItemKind.Line ? 120 : kind == ItemKind.Barcode ? 160 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 300 : kind == ItemKind.CrossTab ? 400 : kind == ItemKind.Contents ? 400 : 100;
             if (h < 8 && kind != ItemKind.Line)
-                h = kind == ItemKind.Image ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : 20;
+                h = kind == ItemKind.Image ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : kind == ItemKind.Contents ? 200 : 20;
 
             var item = AddItem(kind, box.Band, Math.Max(0, Snap(x)), Math.Max(0, Snap(y)), Snap(w), Snap(h),
                 kind == ItemKind.Text ? "Text" : kind == ItemKind.Barcode ? "1234567890" : kind == ItemKind.QrCode ? "https://example.com" : "");
@@ -755,7 +904,7 @@ public sealed class DesignCanvas : Control
     {
         if (Tool != DesignTool.Select) { Cursor = Cursors.Cross; return; }
 
-        if (_selection.Count == 1)
+        if (_selection.Count == 1 && !_selection[0].Locked)
         {
             var band = FindBand(_selection[0]);
             var owner = band == null ? null : BoxOf(band);
@@ -808,6 +957,11 @@ public sealed class DesignCanvas : Control
             case Keys.Control | Keys.X: Cut(); return true;
             case Keys.Control | Keys.V: Paste(); return true;
             case Keys.Control | Keys.A: SelectAll(); return true;
+            case Keys.Control | Keys.Shift | Keys.C: CopyFormat(); return true;
+            case Keys.Control | Keys.Shift | Keys.V: PasteFormat(); return true;
+            case Keys.Control | Keys.G: GroupSelection(); return true;
+            case Keys.Control | Keys.Shift | Keys.G: UngroupSelection(); return true;
+            case Keys.Control | Keys.L: ToggleLock(); return true;
             case Keys.Control | Keys.Z: Undo(); return true;
             case Keys.Control | Keys.Y: Redo(); return true;
         }
@@ -826,7 +980,7 @@ public sealed class DesignCanvas : Control
     private void Nudge(int dx, int dy)
     {
         if (_selection.Count == 0) return;
-        foreach (var it in _selection)
+        foreach (var it in _selection.Where(i => !i.Locked))
         {
             it.X = Math.Max(0, it.X + dx);
             it.Y = Math.Max(0, it.Y + dy);

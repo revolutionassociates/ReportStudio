@@ -27,6 +27,19 @@ public class RenderedItem
     public string BackColor { get; set; } = "";
     public string BorderColor { get; set; } = "";
     public double BorderWidth { get; set; }
+    /// <summary>Cleaned hyperlink address (http, https, mailto, tel, or #Bookmark), or "" for none. See <see cref="LinkTarget"/>.</summary>
+    public string Link { get; set; } = "";
+    /// <summary>Name of the bookmark placed at this item, or "".</summary>
+    public string Bookmark { get; set; } = "";
+    /// <summary>Title of this place in the PDF bookmark panel and the table of contents, or "" when not listed.</summary>
+    public string OutlineTitle { get; set; } = "";
+    /// <summary>Drill-down: set on the items of a collapsible group's header; clicking one opens or closes that group instance.</summary>
+    public string DrillKey { get; set; } = "";
+    /// <summary>Drill-through: the report to open when this item is clicked (name or .rsr file next to this report), or "".</summary>
+    public string DrillReport { get; set; } = "";
+    /// <summary>Drill-through: the parameter values to open it with.</summary>
+    public Dictionary<string, string> DrillParameters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public int OutlineLevel { get; set; } = 1;
     public byte[]? Image { get; set; }
     /// <summary>Which band produced the item.</summary>
     public BandKind Band { get; set; }
@@ -52,7 +65,57 @@ public class ReportResult
     public int RowCount { get; set; }
     /// <summary>Non-fatal problems such as an unknown field in an expression (each message listed once).</summary>
     public List<string> Warnings { get; } = new();
+
+    /// <summary>Every bookmark in the output, in page order (a name used twice keeps its first place).</summary>
+    public List<BookmarkInfo> FindBookmarks()
+    {
+        var list = new List<BookmarkInfo>();
+        for (int p = 0; p < Pages.Count; p++)
+            foreach (var item in Pages[p].Items)
+                if (item.Bookmark.Length > 0 && !list.Any(b => string.Equals(b.Name, item.Bookmark, StringComparison.OrdinalIgnoreCase)))
+                    list.Add(new BookmarkInfo(item.Bookmark, p, item.Y));
+        return list;
+    }
+
+    /// <summary>Every place with an outline title, in reading order (page, then height).</summary>
+    private List<(int Page, RenderedItem Item)> OutlineItems()
+    {
+        var list = new List<(int, RenderedItem)>();
+        for (int p = 0; p < Pages.Count; p++)
+            list.AddRange(Pages[p].Items.Where(i => i.OutlineTitle.Length > 0).OrderBy(i => i.Y).Select(i => (p, i)));
+        return list;
+    }
+
+    /// <summary>Gives each outline place without a bookmark of its own one (_o0, _o1, ...), so a table of contents can link to it.</summary>
+    public void AssignOutlineBookmarks()
+    {
+        var items = OutlineItems();
+        for (int i = 0; i < items.Count; i++)
+            if (items[i].Item.Bookmark.Length == 0) items[i].Item.Bookmark = "_o" + i;
+    }
+
+    /// <summary>The table of contents / PDF bookmarks: every outline place in reading order, with the page number as {Page} prints it.</summary>
+    public List<OutlineEntry> FindOutline()
+    {
+        var result = new List<OutlineEntry>();
+        foreach (var (page, item) in OutlineItems())
+        {
+            int label = Pages.Take(page + 1).Count(p => p.Section == Pages[page].Section);
+            result.Add(new OutlineEntry(item.OutlineTitle, Math.Max(1, item.OutlineLevel), page, item.Y, label, item.Bookmark));
+        }
+        return result;
+    }
+
+    /// <summary>The bookmark with this name (without the leading #), or null.</summary>
+    public BookmarkInfo? FindBookmark(string name) =>
+        FindBookmarks().FirstOrDefault(b => string.Equals(b.Name, name.TrimStart('#'), StringComparison.OrdinalIgnoreCase));
 }
+
+/// <summary>One line of the table of contents: title, level (1 = main), page index (from 0), height on it, the page number shown, and its bookmark name.</summary>
+public sealed record OutlineEntry(string Title, int Level, int PageIndex, double Y, int PageLabel, string Bookmark);
+
+/// <summary>A named place in the output: the page (index from 0) and the height on it, in pixels.</summary>
+public sealed record BookmarkInfo(string Name, int PageIndex, double Y);
 
 /// <summary>Measures wrapped text so CanGrow elements can size themselves. The GDI+ implementation lives in Export.</summary>
 public interface ITextMeasurer

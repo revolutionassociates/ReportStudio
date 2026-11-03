@@ -24,6 +24,12 @@ public class ReportOptions
     /// <summary>Named row sets for sub-reports, linked to the parent row by a key field.</summary>
     public IDictionary<string, List<Dictionary<string, object?>>>? DataSets { get; set; }
 
+    /// <summary>
+    /// Drill-down: keys of the group instances (see RenderedItem.DrillKey) whose open/closed state differs from the group's
+    /// starting state. The viewer adds a key each time the user clicks that group's header.
+    /// </summary>
+    public ISet<string>? ToggledGroups { get; set; }
+
     /// <summary>How many sub-reports deep this run is (set by the engine).</summary>
     internal int SubReportDepth { get; set; }
 }
@@ -54,9 +60,12 @@ public static class ReportEngine
         rows = OrderGroups(def, rows, parameters, options, filterWarnings);
 
         // Pass 1 counts the pages of every numbering section; pass 2 prints "Page n of m" with those counts.
-        var first = new Layouter(def, rows, parameters, options, sectionTotals: null).Run();
+        // Pass 1 also finds where every outline place lands, which a table of contents prints in pass 2.
+        var first = new Layouter(def, rows, parameters, options, sectionTotals: null, outline: null).Run();
+        first.AssignOutlineBookmarks();
         var totals = first.Pages.GroupBy(p => p.Section).ToDictionary(g => g.Key, g => g.Count());
-        var result = new Layouter(def, rows, parameters, options, totals).Run();
+        var result = new Layouter(def, rows, parameters, options, totals, first.FindOutline()).Run();
+        result.AssignOutlineBookmarks();
         result.Warnings.InsertRange(0, filterWarnings);
         return result;
     }
@@ -222,6 +231,7 @@ public static class ReportEngine
         private readonly Row _parameters;
         private readonly ReportOptions _opt;
         private readonly IReadOnlyDictionary<int, int>? _sectionTotals;
+        private readonly IReadOnlyList<OutlineEntry>? _outline;   // from pass 1; null during pass 1
         private readonly DateTime _now;
         private readonly Row _emptyRow = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _warned = new();
@@ -245,6 +255,8 @@ public static class ReportEngine
         // Groups whose header has printed and whose footer has not yet: they are what a new page continues.
         private readonly List<(GroupDefinition Group, Row First, List<Row> Rows)> _active = new();
         private bool _continued;       // true while a header is reprinted on a continuation page
+        private string _groupPath = "";   // identifies the group instance being printed (outer keys included), for drill-down
+        private string _drillKey = "";    // set while a collapsible group's header prints: its items become clickable
 
         private sealed class VarState
         {
@@ -256,9 +268,9 @@ public static class ReportEngine
         }
 
         public Layouter(ReportDefinition def, List<Row> rows, Row parameters, ReportOptions opt,
-            IReadOnlyDictionary<int, int>? sectionTotals)
+            IReadOnlyDictionary<int, int>? sectionTotals, IReadOnlyList<OutlineEntry>? outline)
         {
-            _def = def; _rows = rows; _parameters = parameters; _opt = opt; _sectionTotals = sectionTotals;
+            _def = def; _rows = rows; _parameters = parameters; _opt = opt; _sectionTotals = sectionTotals; _outline = outline;
             _now = opt.Now ?? DateTime.Now;
             _currentRow = rows.Count > 0 ? rows[0] : _emptyRow;
             _footerRow = _currentRow;
@@ -402,10 +414,23 @@ public static class ReportEngine
                 _currentRow = partition[0];
                 int groupLevel = level + 1;
                 ResetVariables(v => v.Reset == VariableReset.Group && v.ResetGroup == groupLevel);
+
+                // Drill-down: a closed instance prints its header and footer only. Its id includes the outer groups' keys.
+                var outerPath = _groupPath;
+                var id = outerPath + "/" + level + ":" + Expr.Format(key, null, CultureInfo.InvariantCulture);
+                bool collapsed = group.Collapsible && (group.StartCollapsed ^ (_opt.ToggledGroups?.Contains(id) == true));
+                var mark = !group.Collapsible ? "" : collapsed ? "+" : "-";
+
+                _vars["DrillMark"] = mark;
+                _drillKey = group.Collapsible ? id : "";
                 RenderBand(group.Header, partition[0], partition);
+                _drillKey = "";
                 _active.Add((group, partition[0], partition));
-                RenderLevel(level + 1, partition);
+                _groupPath = id;
+                if (!collapsed) RenderLevel(level + 1, partition);
+                _groupPath = outerPath;
                 _currentRow = partition[partition.Count - 1];
+                _vars["DrillMark"] = mark;
                 RenderBand(group.Footer, partition[partition.Count - 1], partition);
                 _active.RemoveAt(_active.Count - 1);
                 i = j;
@@ -578,6 +603,7 @@ public static class ReportEngine
                 it.Y += _y;
                 it.Band = band.Kind;
                 it.BandInstance = _bandInstance;
+                if (_drillKey.Length > 0 && band.Kind == BandKind.GroupHeader) it.DrillKey = _drillKey;
                 _page.Items.Add(it);
             }
         }
@@ -612,6 +638,7 @@ public static class ReportEngine
                     BorderColor = item.BorderColor, BorderWidth = item.BorderWidth
                 };
                 ApplyRules(item, r, ctx);
+                ApplyInteraction(item, r, ctx);
 
                 if (item.Kind == ItemKind.Text)
                 {
@@ -635,6 +662,13 @@ public static class ReportEngine
                 {
                     double used = PlaceCrossTab(item, r, ctx, scope, result);
                     height = Math.Max(height, item.Y + Math.Max(item.Height, used));
+                    continue;
+                }
+                else if (item.Kind == ItemKind.Contents)
+                {
+                    // Always as tall as designed, in both passes, so printing it never moves the pages it lists.
+                    PlaceContents(item, r, result);
+                    height = Math.Max(height, item.Y + item.Height);
                     continue;
                 }
                 else if (item.Kind == ItemKind.SubReport)
@@ -661,6 +695,65 @@ public static class ReportEngine
             if (result.Count == 0 && band.SuppressIfBlank) height = 0;
             else if (band.CanShrink) height = result.Count == 0 ? 0 : Math.Max(0, result.Max(x => x.Y + x.Height));
             return result;
+        }
+
+        /// <summary>Works out the item's hyperlink and bookmark for this row; an address that is not allowed is a warning and no link.</summary>
+        private void ApplyInteraction(ReportItem item, RenderedItem r, EvalContext ctx)
+        {
+            if (!string.IsNullOrWhiteSpace(item.Link))
+            {
+                var raw = SafeText(item.Link, "", ctx);
+                r.Link = LinkTarget.Clean(raw);
+                if (r.Link.Length == 0 && !string.IsNullOrWhiteSpace(raw))
+                    Warn($"Link '{raw.Trim()}' is not allowed (only http, https, mailto, tel and #bookmark) and was left out.");
+            }
+            if (!string.IsNullOrWhiteSpace(item.Bookmark))
+                r.Bookmark = SafeText(item.Bookmark, "", ctx).Trim();
+            if (!string.IsNullOrWhiteSpace(item.DrillReport))
+            {
+                r.DrillReport = SafeText(item.DrillReport, "", ctx).Trim();
+                foreach (var part in (item.DrillParameters ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    int eq = part.IndexOf('=');
+                    if (eq > 0) r.DrillParameters[part.Substring(0, eq).Trim()] = SafeText(part.Substring(eq + 1).Trim(), "", ctx);
+                }
+            }
+            if (!string.IsNullOrWhiteSpace(item.Outline) && item.Kind != ItemKind.Contents)
+            {
+                r.OutlineTitle = SafeText(item.Outline, "", ctx).Trim();
+                r.OutlineLevel = Math.Max(1, item.OutlineLevel);
+            }
+        }
+
+        /// <summary>
+        /// Prints the table of contents: one line per outline place found in pass 1 (title, page number, a link to it).
+        /// Lines beyond the box's height are left out with a warning.
+        /// </summary>
+        private void PlaceContents(ReportItem item, RenderedItem box, List<RenderedItem> output)
+        {
+            if (_outline == null) return;   // pass 1: the places are not known yet
+            double rowHeight = Math.Max(10, item.ContentsRowHeight);
+            int fit = (int)Math.Floor(item.Height / rowHeight);
+            var entries = _outline.Where(e => e.Level <= Math.Max(1, item.ContentsLevels)).ToList();
+            if (entries.Count > fit)
+                Warn($"Table of contents '{(string.IsNullOrWhiteSpace(item.Name) ? "contents" : item.Name)}': {entries.Count - fit} line(s) do not fit; make the box taller.");
+
+            const double numberWidth = 40;
+            for (int i = 0; i < Math.Min(fit, entries.Count); i++)
+            {
+                var e = entries[i];
+                double indent = (e.Level - 1) * item.ContentsIndent;
+                double y = item.Y + i * rowHeight;
+                RenderedItem Line(double x, double w, string text, HAlign align) => new()
+                {
+                    Kind = ItemKind.Text, X = box.X + x, Y = y, Width = Math.Max(1, w), Height = rowHeight, Text = text,
+                    FontFamily = item.FontFamily, FontSize = item.FontSize, Bold = item.Bold && e.Level == 1, Italic = item.Italic,
+                    Underline = item.Underline, HAlign = align, VAlign = VAlign.Middle, WordWrap = false, ForeColor = item.ForeColor,
+                    Link = e.Bookmark.Length > 0 ? "#" + e.Bookmark : ""
+                };
+                output.Add(Line(indent, item.Width - indent - numberWidth, e.Title, HAlign.Left));
+                output.Add(Line(item.Width - numberWidth, numberWidth, e.PageLabel.ToString(_opt.Culture), HAlign.Right));
+            }
         }
 
         /// <summary>True when an element would print nothing: no text, or no picture.</summary>

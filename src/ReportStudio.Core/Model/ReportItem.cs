@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace ReportStudio.Core.Model;
 
-public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab }
+public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents }
 public enum CrossAggregate { Sum, Count, Average, Min, Max }
 public enum HAlign { Left, Center, Right }
 public enum VAlign { Top, Middle, Bottom }
@@ -35,6 +35,13 @@ public class ReportItem
     [Category("Layout")] public double Width { get; set; } = 100;
     [Category("Layout")] public double Height { get; set; } = 20;
 
+    [Category("Layout"), Description("A locked element cannot be moved, resized or deleted in the designer. Untick to change it again.")]
+    public bool Locked { get; set; }
+
+    /// <summary>Elements with the same non-empty value were grouped in the designer: they are selected and moved together.</summary>
+    [Browsable(false)]
+    public string ItemGroup { get; set; } = "";
+
     // ---- Content ----
     [Category("Content"),
      Description("Literal text with {expressions}, e.g. 'Total: {Sum(Amount)}' or just '{Customer}'. " +
@@ -58,6 +65,36 @@ public class ReportItem
     [Category("Content"), Description("Optional expression; the element is printed only when it evaluates to true."),
      Editor(ExpressionEditor, EditorBase)]
     public string VisibleWhen { get; set; } = "";
+
+    [Category("Interaction"), Description("Makes the element clickable in the PDF, the viewer and HTML. Write an address with {expressions}: " +
+                                          "https://example.com/emp/{EmpCode}, mailto:{Email}, tel:{Phone}, or #Name to jump to a bookmark in this report.")]
+    public string Link { get; set; } = "";
+
+    [Category("Interaction"), Description("Names this place in the report so a link (#Name) or a table of contents can jump to it. May use {expressions}, e.g. Employee-{EmpCode}.")]
+    public string Bookmark { get; set; } = "";
+
+    [Category("Interaction"), Description("Drill-through: clicking the element in the viewer opens this report (a .rsr file in the same folder as this report) in a new window. May use {expressions}.")]
+    public string DrillReport { get; set; } = "";
+
+    [Category("Interaction"), Description("Drill-through: values for the opened report's parameters, separated by semicolons: Month={@PayMonth}; Code={EmpCode}")]
+    public string DrillParameters { get; set; } = "";
+
+    [Category("Interaction"), Description("Puts this place in the PDF's bookmark panel and in a table of contents. Write the title, with {expressions}: " +
+                                          "e.g. Employee {Name}. Empty = not listed.")]
+    public string Outline { get; set; } = "";
+
+    [Category("Interaction"), Description("How deep the title sits: 1 is a main heading, 2 sits under the last 1, and so on.")]
+    public int OutlineLevel { get; set; } = 1;
+
+    // ---- Table of contents (Kind = Contents): lists every element that has an Outline title, with its page number ----
+    [Category("Contents"), Description("Deepest level listed (1 = main headings only).")]
+    public int ContentsLevels { get; set; } = 3;
+
+    [Category("Contents"), Description("Height of each line, in pixels. The box keeps its designed height, so lines that do not fit are left out with a warning.")]
+    public double ContentsRowHeight { get; set; } = 20;
+
+    [Category("Contents"), Description("How far each level is moved in, in pixels.")]
+    public double ContentsIndent { get; set; } = 16;
 
     // ---- Appearance ----
     /// <summary>The font new items use. Ubuntu ships with the application, so reports look the same everywhere.</summary>

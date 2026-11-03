@@ -254,7 +254,7 @@ public sealed class ReportSettingsDialog : Form
     private void EditSelectedVariableCell()
     {
         var cell = _vars.CurrentCell;
-        if (cell == null || cell.OwningRow.IsNewRow || cell.ColumnIndex < 2 || cell.ColumnIndex > 4)
+        if (cell == null || cell.OwningRow == null || cell.OwningRow.IsNewRow || cell.ColumnIndex < 2 || cell.ColumnIndex > 4)
         {
             MessageBox.Show(this, "Click first on a Value, Condition or Start value cell of a variable.", Text);
             return;

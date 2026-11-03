@@ -219,6 +219,15 @@ public class GroupDefinition
     /// </summary>
     public bool RepeatHeader { get; set; }
 
+    /// <summary>
+    /// Drill-down: in the viewer, clicking this group's header hides or shows its rows (and inner groups); the footer stays.
+    /// In the header, {DrillMark} is "-" while open and "+" while closed, e.g. in a small text element at the left.
+    /// </summary>
+    public bool Collapsible { get; set; }
+
+    /// <summary>With <see cref="Collapsible"/>: every instance starts closed; the viewer opens the ones the user clicks.</summary>
+    public bool StartCollapsed { get; set; }
+
     public Band Header { get; set; } = new() { Kind = BandKind.GroupHeader, Height = 26 };
     public Band Footer { get; set; } = new() { Kind = BandKind.GroupFooter, Height = 26 };
 }

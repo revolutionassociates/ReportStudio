@@ -219,4 +219,128 @@ public class PdfWriterTests
 
         Assert.Equal("BBF316E8D940AF0AD3", Convert.ToHexString(result));
     }
+
+    // ---- links and bookmarks (requirement 27) ----
+
+    private static string Latin1(byte[] bytes) => System.Text.Encoding.Latin1.GetString(bytes);
+
+    [Fact]
+    public void A_web_link_becomes_a_clickable_area()
+    {
+        var doc = new PdfDocument("Links");
+        doc.AddPage(794, 1123).LinkToUri(10, 20, 100, 30, "https://example.com/a");
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+
+        var text = Latin1(ms.ToArray());
+
+        Assert.Contains("/Subtype /Link", text);
+        Assert.Contains("/S /URI", text);
+        Assert.Contains("<" + Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes("https://example.com/a")) + ">", text);
+    }
+
+    [Fact]
+    public void A_link_to_a_bookmark_points_at_the_page_that_holds_it()
+    {
+        var doc = new PdfDocument("Links");
+        doc.AddPage(794, 1123).LinkToBookmark(10, 20, 100, 30, "Later");
+        doc.AddPage(794, 1123);
+        doc.Bookmark("Later", 1, 200);
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+
+        var text = Latin1(ms.ToArray());
+
+        Assert.Contains("/Dest [", text);
+        Assert.Contains("/XYZ", text);
+    }
+
+    [Fact]
+    public void A_link_to_a_missing_bookmark_is_left_out()
+    {
+        var doc = new PdfDocument("Links");
+        doc.AddPage(794, 1123).LinkToBookmark(10, 20, 100, 30, "Nowhere");
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+
+        Assert.DoesNotContain("/Subtype /Link", Latin1(ms.ToArray()));
+    }
+
+    [Fact]
+    public void A_file_with_links_still_opens_in_a_reader()
+    {
+        var doc = new PdfDocument("Links");
+        var page = doc.AddPage(794, 1123);
+        page.LinkToUri(10, 20, 100, 30, "mailto:hr@example.com");
+        doc.AddPage(794, 1123);
+        page.LinkToBookmark(10, 60, 100, 30, "P2");
+        doc.Bookmark("P2", 1, 0);
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+        ms.Position = 0;
+
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(ms);
+        Assert.Equal(2, pdf.NumberOfPages);
+    }
+
+    // ---- bookmark panel (requirement 28) ----
+
+    [Fact]
+    public void Outline_lines_make_a_bookmark_panel_with_nested_levels()
+    {
+        var doc = new PdfDocument("Outline");
+        doc.AddPage(794, 1123);
+        doc.AddPage(794, 1123);
+        doc.Outline("Part one", 1, 0, 100);
+        doc.Outline("Detail Ü", 2, 1, 200);       // nests under "Part one"; non-ASCII title
+        doc.Outline("Part two", 1, 1, 400);
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+
+        var text = Latin1(ms.ToArray());
+
+        Assert.Contains("/Type /Outlines", text);
+        Assert.Contains("/PageMode /UseOutlines", text);
+        Assert.Contains("/Outlines ", text);
+        Assert.Contains("/Count 3", text);        // the root counts every line
+        Assert.Contains("/Count 1", text);        // "Part one" has one child
+        Assert.Contains("<" + Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes("Part one")) + ">", text);
+        Assert.Contains("/Parent", text);
+        Assert.Contains("/Next", text);
+        Assert.Contains("/Prev", text);
+
+        ms.Position = 0;
+        using var pdf = UglyToad.PdfPig.PdfDocument.Open(ms);
+        Assert.Equal(2, pdf.NumberOfPages);
+    }
+
+    [Fact]
+    public void A_document_without_outline_lines_has_no_bookmark_panel()
+    {
+        var doc = new PdfDocument("Plain");
+        doc.AddPage(794, 1123);
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+
+        var text = Latin1(ms.ToArray());
+
+        Assert.DoesNotContain("/Outlines", text);
+        Assert.DoesNotContain("UseOutlines", text);
+    }
+
+    [Fact]
+    public void A_level_that_skips_a_step_is_pulled_up_and_a_line_on_a_missing_page_is_dropped()
+    {
+        var doc = new PdfDocument("Odd");
+        doc.AddPage(794, 1123);
+        doc.Outline("Starts deep", 3, 0, 0);      // first line is always a main heading
+        doc.Outline("Nowhere", 1, 9, 0);          // no such page
+        using var ms = new MemoryStream();
+        doc.Save(ms, null);
+
+        var text = Latin1(ms.ToArray());
+
+        Assert.Contains("/Count 1", text);
+        Assert.DoesNotContain(Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes("Nowhere")), text);
+    }
 }

@@ -26,9 +26,23 @@ public static class PdfExporter
         foreach (var page in report.Pages)
         {
             var p = doc.AddPage(page.Width, page.Height);
-            foreach (var item in page.Items) DrawItem(doc, p, item);
+            foreach (var item in page.Items)
+            {
+                DrawItem(doc, p, item);
+                if (item.Bookmark.Length > 0) doc.Bookmark(item.Bookmark, doc.PageCount - 1, item.Y);
+                AddLink(p, item);
+            }
         }
+        foreach (var entry in report.FindOutline()) doc.Outline(entry.Title, entry.Level, entry.PageIndex, entry.Y);
         doc.Save(stream, options);
+    }
+
+    /// <summary>Makes the item's box clickable: a web address, mail or phone link, or a jump to a bookmark.</summary>
+    private static void AddLink(PdfPage page, RenderedItem it)
+    {
+        var (kind, value) = LinkTarget.Parse(it.Link);   // checked again here: a RenderedItem can come from anywhere
+        if (kind == LinkKind.External) page.LinkToUri(it.X, it.Y, it.Width, it.Height, value);
+        else if (kind == LinkKind.Internal) page.LinkToBookmark(it.X, it.Y, it.Width, it.Height, value.Substring(1));
     }
 
     private static void DrawItem(PdfDocument doc, PdfPage g, RenderedItem it)

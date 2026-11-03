@@ -56,7 +56,7 @@ public static class HtmlExporter
         {
             html.Append("<section class=\"page\" style=\"width:").Append(Px(page.Width)).Append("px;height:")
                 .Append(Px(page.Height)).Append("px\">\n");
-            foreach (var item in page.Items) AppendItem(html, item);
+            foreach (var item in page.Items) { AppendItem(html, item); AppendInteraction(html, item); }
             html.Append("</section>\n");
         }
         if (report.Pages.Count == 0)
@@ -67,6 +67,31 @@ public static class HtmlExporter
     }
 
     // ---------------------------------------------------------------------------------------
+
+    /// <summary>A bookmark becomes an anchor at the item; a link becomes a transparent clickable box over it.</summary>
+    private static void AppendInteraction(StringBuilder html, RenderedItem it)
+    {
+        string box = $"position:absolute;left:{Px(it.X)}px;top:{Px(it.Y)}px;width:{Px(it.Width)}px;height:{Px(it.Height)}px";
+        if (it.Bookmark.Length > 0)
+            html.Append("<a id=\"").Append(WebUtility.HtmlEncode(BookmarkId(it.Bookmark))).Append("\" style=\"").Append(box).Append(";pointer-events:none\"></a>\n");
+
+        var (kind, value) = LinkTarget.Parse(it.Link);
+        if (kind == LinkKind.External)
+            html.Append("<a href=\"").Append(WebUtility.HtmlEncode(value)).Append("\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"")
+                .Append(box).Append(";display:block\"></a>\n");
+        else if (kind == LinkKind.Internal)
+            html.Append("<a href=\"#").Append(WebUtility.HtmlEncode(BookmarkId(value.Substring(1)))).Append("\" style=\"")
+                .Append(box).Append(";display:block\"></a>\n");
+    }
+
+    /// <summary>An element id for a bookmark name: letters and digits stay, everything else becomes _xx (so two names never clash by accident).</summary>
+    internal static string BookmarkId(string name)
+    {
+        var sb = new StringBuilder("bm-");
+        foreach (var ch in name.ToLowerInvariant())
+            if (char.IsAsciiLetterOrDigit(ch)) sb.Append(ch); else sb.Append('_').Append(((int)ch).ToString("x"));
+        return sb.ToString();
+    }
 
     private static void AppendItem(StringBuilder html, RenderedItem it)
     {

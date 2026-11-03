@@ -86,18 +86,35 @@ internal sealed class MainForm : Form
             Item("Select &all in band\tCtrl+A", Keys.None, (_, _) => _canvas.SelectAll())
         });
 
+        var arrange = new ToolStripMenuItem("&Arrange");
+        arrange.DropDownItems.AddRange(new ToolStripItem[]
+        {
+            Item("Bring to &front", Keys.None, (_, _) => _canvas.BringItemsToFront()),
+            Item("Send to &back", Keys.None, (_, _) => _canvas.SendItemsToBack()),
+            Item("Bring f&orward", Keys.None, (_, _) => _canvas.BringItemsForward()),
+            Item("Send backwar&d", Keys.None, (_, _) => _canvas.SendItemsBackward()),
+            new ToolStripSeparator(),
+            Item("&Group\tCtrl+G", Keys.None, (_, _) => _canvas.GroupSelection()),
+            Item("&Ungroup\tCtrl+Shift+G", Keys.None, (_, _) => _canvas.UngroupSelection()),
+            Item("&Lock / unlock\tCtrl+L", Keys.None, (_, _) => _canvas.ToggleLock()),
+            new ToolStripSeparator(),
+            Item("&Copy format\tCtrl+Shift+C", Keys.None, (_, _) => _canvas.CopyFormat()),
+            Item("&Paste format\tCtrl+Shift+V", Keys.None, (_, _) => _canvas.PasteFormat())
+        });
+
         var report = new ToolStripMenuItem("&Report");
         report.DropDownItems.AddRange(new ToolStripItem[]
         {
             Item("Report &settings (data, parameters, groups, page)…", Keys.None, (_, _) => EditSettings()),
             Item("&Preview", Keys.F5, (_, _) => { _tabs.SelectedIndex = 1; RunPreview(forcePrompt: true); }),
+            Item("&Live data on the design", Keys.None, (_, _) => ToggleLiveData()),
             Item("Back to &design", Keys.F6, (_, _) => _tabs.SelectedIndex = 0)
         });
 
         var help = new ToolStripMenuItem("&Help");
         help.DropDownItems.Add(Item("Expression &reference", Keys.F1, (_, _) => ShowHelp()));
 
-        menu.Items.AddRange(new ToolStripItem[] { file, edit, report, help });
+        menu.Items.AddRange(new ToolStripItem[] { file, edit, arrange, report, help });
         MainMenuStrip = menu;
         Controls.Add(menu);
     }
@@ -123,6 +140,7 @@ internal sealed class MainForm : Form
         AddToolButton(bar, DesignTool.QrCode, "QR code");
         AddToolButton(bar, DesignTool.SubReport, "Sub-report");
         AddToolButton(bar, DesignTool.CrossTab, "Cross-tab");
+        AddToolButton(bar, DesignTool.Contents, "Contents");
         bar.Items.Add(new ToolStripSeparator());
 
         bar.Items.Add(Button("B", (_, _) => Toggle(i => i.Bold, (i, v) => i.Bold = v), FontStyle.Bold));
@@ -165,6 +183,11 @@ internal sealed class MainForm : Form
         bar.Items.Add(new ToolStripSeparator());
 
         bar.Items.Add(Button("Settings…", (_, _) => EditSettings()));
+        _liveData = Button("Live data", (_, _) => ToggleLiveData());
+        bar.Items.Add(_liveData);
+        _nextRow = Button("Next row ▶", (_, _) => { _canvas.Preview?.Next(); _canvas.Invalidate(); UpdateLiveDataText(); });
+        _nextRow.Visible = false;
+        bar.Items.Add(_nextRow);
         bar.Items.Add(Button("▶ Preview", (_, _) => { _tabs.SelectedIndex = 1; RunPreview(forcePrompt: true); }, FontStyle.Bold));
 
         Controls.Add(bar);
@@ -247,6 +270,7 @@ internal sealed class MainForm : Form
         _path = path;
         _lastParameters = new Dictionary<string, string?>();
         _canvas.Definition = def;
+        SetLiveData(null);
         _tabs.SelectedIndex = 0;
         SetDirty(false);
         RefreshFields();
@@ -419,9 +443,64 @@ internal sealed class MainForm : Form
         using var dlg = new ReportSettingsDialog(_def);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _dbTrusted = true;   // the user just wrote or reviewed the data source themselves
+        SetLiveData(null);   // the data source may have changed: switch live data on again to reload
         _canvas.NotifyChanged();
         RefreshFields();
         SetDirty(true);
+    }
+
+    private ToolStripButton? _liveData;
+    private ToolStripButton? _nextRow;
+
+    /// <summary>Shows real rows on the design canvas (or back to {Field} placeholders).</summary>
+    private void ToggleLiveData()
+    {
+        if (_canvas.Preview != null) { SetLiveData(null); return; }
+
+        if (_def.DataSource.Provider == DbProvider.Host)
+        {
+            MessageBox.Show(this, "This report takes its rows from the host application, so there is no data to show here. Use the sample data source to see values.",
+                "Live data", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        if (_def.HasOwnQuery && !_dbTrusted)
+        {
+            if (!UntrustedFileGuard.Confirm(this, _def, _path)) return;
+            _dbTrusted = true;
+            RefreshFields();
+        }
+        if (_def.Parameters.Count > 0 && _lastParameters.Count == 0)
+        {
+            using var dlg = new ParameterDialog(_def.Parameters, _lastParameters);
+            if (dlg.ShowDialog(this) != DialogResult.OK) return;
+            _lastParameters = dlg.Values;
+        }
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            SetLiveData(ReportStudio.Core.Layout.DesignPreview.Load(_def, _lastParameters));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "The data could not be read:\n\n" + ex.Message, "Live data", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally { Cursor = Cursors.Default; }
+    }
+
+    private void SetLiveData(ReportStudio.Core.Layout.DesignPreview? preview)
+    {
+        _canvas.Preview = preview;
+        if (_nextRow == null || _liveData == null) return;   // the toolbar is not built yet
+        _nextRow.Visible = preview != null && preview.RowCount > 1;
+        _liveData.Checked = preview != null;
+        UpdateLiveDataText();
+    }
+
+    private void UpdateLiveDataText()
+    {
+        var p = _canvas.Preview;
+        if (_liveData == null) return;
+        _liveData.Text = p == null ? "Live data" : $"Live data ✓ (row {p.CurrentIndex + 1} of {p.RowCount})";
     }
 
     private void RunPreview(bool forcePrompt)
