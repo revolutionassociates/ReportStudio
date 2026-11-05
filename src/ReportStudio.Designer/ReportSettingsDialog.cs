@@ -153,12 +153,17 @@ public sealed class ReportSettingsDialog : Form
             Name = "Type", HeaderText = "Type", ValueType = typeof(ParameterType),
             DataSource = Enum.GetValues<ParameterType>(), FlatStyle = FlatStyle.Flat
         });
-        _params.Columns.Add("Default", "Default value");
+        _params.Columns.Add("Default", "Default value (start with = for an expression, e.g. =MonthStart(Today()))");
+        _params.Columns.Add("Choices", "Drop-down list: A;B;C or Code=Text;...");
+        _params.Columns.Add("ChoicesQuery", "...or read from the database (value, text)");
+        _params.Columns.Add("DependsOn", "List follows parameters (names, ;)");
+        _params.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Multi", HeaderText = "Pick several" });
         page.Controls.Add(_params);
         page.Controls.Add(new Label
         {
             Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 6),
-            Text = "Use a parameter in the SQL as @Name and on the report as {@Name}. Dates are yyyy-MM-dd."
+            Text = "Use a parameter in the SQL as @Name and on the report as {@Name}. Dates are yyyy-MM-dd. " +
+                   "\"Pick several\" gives a list: SQL  WHERE Dept IN (@Name)  or an expression  In(Dept, @Name)."
         });
         return page;
     }
@@ -169,6 +174,8 @@ public sealed class ReportSettingsDialog : Form
         _groups.Columns.Add("Expression", "Group by (field or expression)");
         _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "NewPage", HeaderText = "Start each group on a new page" });
         _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "RestartPages", HeaderText = "Restart page numbers" });
+        _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Collapsible", HeaderText = "Drill-down: click header to open/close" });
+        _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "StartCollapsed", HeaderText = "Start closed" });
 
         var groupBox = new GroupBox
         {
@@ -315,8 +322,8 @@ public sealed class ReportSettingsDialog : Form
         _timeout.Value = Math.Clamp(_def.DataSource.CommandTimeoutSeconds, 5, 3600);
         _fields.Text = string.Join(Environment.NewLine, _def.DataSource.Fields.Select(f => f.ToString()));
 
-        foreach (var p in _def.Parameters) _params.Rows.Add(p.Name, p.Prompt, p.Type, p.DefaultValue);
-        foreach (var g in _def.Groups) _groups.Rows.Add(g.Expression, g.StartNewPage, g.RestartPageNumbers);
+        foreach (var p in _def.Parameters) _params.Rows.Add(p.Name, p.Prompt, p.Type, p.DefaultValue, p.Choices, p.ChoicesQuery, p.DependsOn, p.MultiValue);
+        foreach (var g in _def.Groups) _groups.Rows.Add(g.Expression, g.StartNewPage, g.RestartPageNumbers, g.Collapsible, g.StartCollapsed);
         _sort.Text = string.Join(Environment.NewLine, _def.SortBy);
 
         _filter.Text = _def.Filter;
@@ -351,7 +358,11 @@ public sealed class ReportSettingsDialog : Form
                 Name = name,
                 Prompt = Convert.ToString(row.Cells[1].Value) ?? "",
                 Type = row.Cells[2].Value is ParameterType t ? t : ParameterType.Text,
-                DefaultValue = Convert.ToString(row.Cells[3].Value) ?? ""
+                DefaultValue = Convert.ToString(row.Cells[3].Value) ?? "",
+                Choices = (Convert.ToString(row.Cells[4].Value) ?? "").Trim(),
+                ChoicesQuery = (Convert.ToString(row.Cells[5].Value) ?? "").Trim(),
+                DependsOn = (Convert.ToString(row.Cells[6].Value) ?? "").Trim(),
+                MultiValue = row.Cells[7].Value is true
             });
         }
 
@@ -399,6 +410,8 @@ public sealed class ReportSettingsDialog : Form
             g.Expression = Convert.ToString(rows[i].Cells[0].Value)!.Trim();
             g.StartNewPage = rows[i].Cells[1].Value is true;
             g.RestartPageNumbers = rows[i].Cells[2].Value is true;
+            g.Collapsible = rows[i].Cells[3].Value is true;
+            g.StartCollapsed = rows[i].Cells[4].Value is true;
             groups.Add(g);
         }
         _def.Groups = groups;

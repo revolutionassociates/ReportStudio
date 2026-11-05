@@ -56,7 +56,7 @@ public sealed class DesignPreview
     /// </summary>
     public string TextFor(ReportItem item)
     {
-        if (item.Kind is not (ItemKind.Text or ItemKind.Barcode or ItemKind.QrCode)) return item.Text;
+        if (item.Kind is not (ItemKind.Text or ItemKind.Barcode or ItemKind.QrCode or ItemKind.Barcode2D)) return item.Text;
         if (_rows.Count == 0) return item.Text;
 
         var template = TextTemplate.Parse(item.Text);

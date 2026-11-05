@@ -257,6 +257,12 @@ internal sealed class Call : Node
 
         switch (fn)
         {
+            case "in":      // is the value one of the others? A parameter that lets the user pick several counts as all its values
+                Need(2);
+                for (int k = 1; k < a.Count; k++)
+                    if (a[k] is ReportStudio.Core.Model.ValueList list ? list.Any(e => Expr.Compare(A(0), e) == 0) : Expr.Compare(A(0), a[k]) == 0)
+                        return true;
+                return false;
             case "format": Need(2); return Expr.Format(A(0), S(1), ctx.Culture);
             case "now": return ctx.Now;
             case "today": return ctx.Now.Date;

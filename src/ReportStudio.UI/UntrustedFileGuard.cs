@@ -19,6 +19,14 @@ public static class UntrustedFileGuard
         var query = ds.Query.Trim();
         if (query.Length > MaxQueryChars) query = query[..MaxQueryChars] + " …";
 
+        // Drop-down lists that are read from the database are queries from the file too.
+        foreach (var p in definition.Parameters.Where(p => !string.IsNullOrWhiteSpace(p.ChoicesQuery)))
+        {
+            var choices = p.ChoicesQuery.Trim();
+            if (choices.Length > MaxQueryChars) choices = choices[..MaxQueryChars] + " …";
+            query += (query.Length > 0 ? "\n\n" : "") + $"List for parameter {p.Name}:\n{choices}";
+        }
+
         var text =
             "This report file contains its own database query and connection.\n" +
             "Running it will connect to a database and execute the query below.\n\n" +

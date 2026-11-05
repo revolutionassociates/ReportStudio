@@ -68,6 +68,10 @@ public static class GdiPageRenderer
                 if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
                 DrawQr(g, item, rect);
                 break;
+            case ItemKind.Barcode2D:
+                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
+                DrawCells(g, item, rect, Symbol2DLayout.Rectangles(item.Barcode2DType, item.Text, rect.Width, rect.Height));
+                break;
             case ItemKind.Text:
                 if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
                 DrawText(g, item, rect);
@@ -83,7 +87,11 @@ public static class GdiPageRenderer
 
     private static void DrawQr(Graphics g, RenderedItem item, RectangleF rect)
     {
-        var cells = QrLayout.Rectangles(item.Text, item.QrLevel, rect.Width, rect.Height);
+        DrawCells(g, item, rect, QrLayout.Rectangles(item.Text, item.QrLevel, rect.Width, rect.Height));
+    }
+
+    private static void DrawCells(Graphics g, RenderedItem item, RectangleF rect, IReadOnlyList<(double X, double Y, double W, double H)> cells)
+    {
         if (cells.Count == 0) return;
 
         // One filled path (not many rectangles) so anti-aliasing leaves no hairline gaps between modules.

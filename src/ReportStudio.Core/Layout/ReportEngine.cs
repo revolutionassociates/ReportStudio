@@ -116,7 +116,7 @@ public static class ReportEngine
         {
             string? text = null;
             raw?.TryGetValue(p.Name, out text);
-            result[p.Name] = p.Parse(text ?? p.DefaultValue);
+            result[p.Name] = p.Parse(text);
         }
         return result;
     }
@@ -659,6 +659,10 @@ public static class ReportEngine
                 {
                     PlaceQr(item, r, ctx);
                 }
+                else if (item.Kind == ItemKind.Barcode2D)
+                {
+                    PlaceSymbol(item, r, ctx);
+                }
                 else if (item.Kind == ItemKind.CrossTab)
                 {
                     double used = PlaceCrossTab(item, r, ctx, scope, result);
@@ -760,7 +764,7 @@ public static class ReportEngine
         /// <summary>True when an element would print nothing: no text, or no picture.</summary>
         private static bool IsBlank(RenderedItem r) => r.Kind switch
         {
-            ItemKind.Text or ItemKind.Barcode or ItemKind.QrCode => string.IsNullOrWhiteSpace(r.Text),
+            ItemKind.Text or ItemKind.Barcode or ItemKind.QrCode or ItemKind.Barcode2D => string.IsNullOrWhiteSpace(r.Text),
             ItemKind.Image => r.Image == null || r.Image.Length == 0,
             _ => false
         };
@@ -1099,6 +1103,26 @@ public static class ReportEngine
             qr.Text = value;
         }
 
+        private void PlaceSymbol(ReportItem item, RenderedItem symbol, EvalContext ctx)
+        {
+            symbol.Barcode2DType = item.Barcode2DType;
+
+            string value;
+            try { value = TextTemplate.Parse(item.Text).EvaluateString(ctx, item.Format); }
+            catch (ExpressionException ex)
+            {
+                Warn($"2D code '{item.Name}': {ex.Message}");
+                return;
+            }
+
+            if (!Symbol2D.TryEncode(item.Barcode2DType, value, out _, out _, out var reason))
+            {
+                Warn($"2D code '{item.Name}': {reason}");
+                return;
+            }
+            symbol.Text = value;
+        }
+
         /// <summary>
         /// Fills in a barcode: the bars item gets the value, and the readable text becomes a separate centred
         /// text item under the bars (so Excel and Word exports carry it too). An unreadable value prints nothing and warns.
@@ -1130,7 +1154,7 @@ public static class ReportEngine
             {
                 Kind = ItemKind.Text,
                 X = bars.X, Y = item.Y + bars.Height, Width = item.Width, Height = captionHeight,
-                Text = value,
+                Text = BarcodeEncoder.PrintedText(item.BarcodeType, value),   // EAN/UPC with the check digit that was added
                 FontFamily = item.FontFamily, FontSize = item.FontSize, Bold = item.Bold, Italic = item.Italic,
                 HAlign = HAlign.Center, VAlign = VAlign.Middle, WordWrap = false,
                 ForeColor = item.ForeColor

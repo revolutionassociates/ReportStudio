@@ -26,6 +26,7 @@ public static class ExpressionFunctions
         new(Totals, "Max", "Max(value)", "Largest value (numbers, dates or text).", "Max(Net)"),
 
         new(Logic, "IIf", "IIf(condition, whenTrue, whenFalse)", "Gives one value when the condition is true and another when it is not. 'If' works too.", "IIf(Net > 50000, 'High', 'Normal')"),
+        new(Logic, "In", "In(value, option1, option2, ...)", "True when the value equals one of the options. A parameter where the user picks several values counts as all of them.", "In(Status, 'Active', 'Pending')"),
         new(Logic, "IsNull", "IsNull(value, other)", "The value, or the other value when it is empty.", "IsNull(Remarks, '-')"),
 
         new(Text, "Format", "Format(value, format)", "Shows a number or date in a format such as N2, #,##0.00 or dd-MMM-yyyy.", "Format(JoinDate, 'dd-MMM-yyyy')"),

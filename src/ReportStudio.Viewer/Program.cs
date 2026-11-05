@@ -81,7 +81,7 @@ internal sealed class ViewerForm : Form
         if (_definition == null) return;
         if (prompt && _definition.Parameters.Count > 0)
         {
-            using var dlg = new ParameterDialog(_definition.Parameters, _lastParameters);
+            using var dlg = new ParameterDialog(_definition.Parameters, _lastParameters, _definition);
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
             _lastParameters = dlg.Values;
         }

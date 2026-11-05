@@ -7,7 +7,7 @@ using ReportStudio.Export;
 
 namespace ReportStudio.Designer;
 
-public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents }
+public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D }
 public enum AlignKind { Left, Right, Top, Bottom, SameWidth, SameHeight }
 
 /// <summary>
@@ -550,11 +550,12 @@ public sealed class DesignCanvas : Control
             ForeColor = item.ForeColor, BackColor = item.BackColor,
             BorderColor = item.BorderColor, BorderWidth = item.BorderWidth,
             Image = DecodeImage(item),
-            BarcodeType = item.BarcodeType, QrLevel = item.QrLevel
+            BarcodeType = item.BarcodeType, QrLevel = item.QrLevel, Barcode2DType = item.Barcode2DType
         };
         // A barcode / QR value written as an expression ({EmpCode}) has no value at design time: show a sample.
-        if (_preview == null && item.Kind == ItemKind.Barcode && item.Text.Contains('{')) ri.Text = "1234567890";
+        if (_preview == null && item.Kind == ItemKind.Barcode && item.Text.Contains('{')) ri.Text = ReportStudio.Core.Barcodes.BarcodeEncoder.SampleValue(item.BarcodeType);
         if (_preview == null && item.Kind == ItemKind.QrCode && item.Text.Contains('{')) ri.Text = "https://example.com";
+        if (_preview == null && item.Kind == ItemKind.Barcode2D && item.Text.Contains('{')) ri.Text = ReportStudio.Core.Barcodes.Symbol2D.SampleValue(item.Barcode2DType);
         if (item.Kind is ItemKind.SubReport or ItemKind.CrossTab or ItemKind.Contents)
         {
             // Their content is only known at run time: show a labelled placeholder.
@@ -812,17 +813,18 @@ public sealed class DesignCanvas : Control
                 DesignTool.Image => ItemKind.Image,
                 DesignTool.Barcode => ItemKind.Barcode,
                 DesignTool.QrCode => ItemKind.QrCode,
+                DesignTool.Barcode2D => ItemKind.Barcode2D,
                 DesignTool.SubReport => ItemKind.SubReport,
                 DesignTool.CrossTab => ItemKind.CrossTab,
                 DesignTool.Contents => ItemKind.Contents,
                 _ => ItemKind.Text
             };
-            if (w < 8) w = kind == ItemKind.Line ? 120 : kind == ItemKind.Barcode ? 160 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 300 : kind == ItemKind.CrossTab ? 400 : kind == ItemKind.Contents ? 400 : 100;
+            if (w < 8) w = kind == ItemKind.Line ? 120 : kind == ItemKind.Barcode ? 160 : kind == ItemKind.QrCode || kind == ItemKind.Barcode2D ? 80 : kind == ItemKind.SubReport ? 300 : kind == ItemKind.CrossTab ? 400 : kind == ItemKind.Contents ? 400 : 100;
             if (h < 8 && kind != ItemKind.Line)
-                h = kind == ItemKind.Image ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : kind == ItemKind.Contents ? 200 : 20;
+                h = kind == ItemKind.Image ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode || kind == ItemKind.Barcode2D ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : kind == ItemKind.Contents ? 200 : 20;
 
             var item = AddItem(kind, box.Band, Math.Max(0, Snap(x)), Math.Max(0, Snap(y)), Snap(w), Snap(h),
-                kind == ItemKind.Text ? "Text" : kind == ItemKind.Barcode ? "1234567890" : kind == ItemKind.QrCode ? "https://example.com" : "");
+                kind == ItemKind.Text ? "Text" : kind == ItemKind.Barcode ? "1234567890" : kind == ItemKind.QrCode ? "https://example.com" : kind == ItemKind.Barcode2D ? "ReportStudio 2D" : "");
 
             Tool = DesignTool.Select;
             ToolUsed?.Invoke(this, EventArgs.Empty);

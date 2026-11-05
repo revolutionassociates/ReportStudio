@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace ReportStudio.Core.Model;
 
-public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents }
+public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D }
 public enum CrossAggregate { Sum, Count, Average, Min, Max }
 public enum HAlign { Left, Center, Right }
 public enum VAlign { Top, Middle, Bottom }
@@ -131,6 +131,10 @@ public class ReportItem
     // ---- QR code (Kind = QrCode; the value to encode is Text, e.g. "upi://pay?pa={Upi}&am={Net}") ----
     [Category("QR code"), Description("How much damage the code survives: Low 7%, Medium 15%, Quartile 25%, High 30%. Higher levels make a denser code.")]
     public ReportStudio.Core.Barcodes.QrLevel QrLevel { get; set; } = ReportStudio.Core.Barcodes.QrLevel.Medium;
+
+    // ---- Two-dimensional code (Kind = Barcode2D; the value to encode is Text, e.g. "{PartNo}") ----
+    [Category("2D code"), Description("Which code: Data Matrix. The value to encode is the Text, e.g. {PartNo}. An unreadable or too long value prints nothing and gives a warning.")]
+    public ReportStudio.Core.Barcodes.Barcode2DType Barcode2DType { get; set; }
 
     // ---- Sub-report (Kind = SubReport): another report drawn inside this band, as wide as this element ----
     [Category("Sub-report"), Description("The sub-report: a name the host registered, or a .rsr file next to this report (never outside its folder).")]

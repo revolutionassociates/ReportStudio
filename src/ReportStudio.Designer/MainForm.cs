@@ -138,6 +138,7 @@ internal sealed class MainForm : Form
         AddToolButton(bar, DesignTool.Image, "Image");
         AddToolButton(bar, DesignTool.Barcode, "Barcode");
         AddToolButton(bar, DesignTool.QrCode, "QR code");
+        AddToolButton(bar, DesignTool.Barcode2D, "2D code");
         AddToolButton(bar, DesignTool.SubReport, "Sub-report");
         AddToolButton(bar, DesignTool.CrossTab, "Cross-tab");
         AddToolButton(bar, DesignTool.Contents, "Contents");
@@ -471,7 +472,7 @@ internal sealed class MainForm : Form
         }
         if (_def.Parameters.Count > 0 && _lastParameters.Count == 0)
         {
-            using var dlg = new ParameterDialog(_def.Parameters, _lastParameters);
+            using var dlg = new ParameterDialog(_def.Parameters, _lastParameters, _def);
             if (dlg.ShowDialog(this) != DialogResult.OK) return;
             _lastParameters = dlg.Values;
         }
@@ -514,7 +515,7 @@ internal sealed class MainForm : Form
 
         if (_def.Parameters.Count > 0 && (forcePrompt || _lastParameters.Count == 0))
         {
-            using var dlg = new ParameterDialog(_def.Parameters, _lastParameters);
+            using var dlg = new ParameterDialog(_def.Parameters, _lastParameters, _def);
             if (dlg.ShowDialog(this) != DialogResult.OK) { _tabs.SelectedIndex = 0; return; }
             _lastParameters = dlg.Values;
         }

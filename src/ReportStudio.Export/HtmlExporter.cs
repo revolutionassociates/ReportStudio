@@ -127,6 +127,9 @@ public static class HtmlExporter
             case ItemKind.QrCode:
                 AppendQr(html, it, box, backCss, borderCss);
                 return;
+            case ItemKind.Barcode2D:
+                AppendCells(html, it, box, backCss, borderCss, Symbol2DLayout.Rectangles(it.Barcode2DType, it.Text, it.Width, it.Height));
+                return;
             case ItemKind.Text:
                 AppendText(html, it, box, backCss, borderCss);
                 return;
@@ -173,8 +176,13 @@ public static class HtmlExporter
 
     private static void AppendQr(StringBuilder html, RenderedItem it, string box, string backCss, string borderCss)
     {
+        AppendCells(html, it, box, backCss, borderCss, QrLayout.Rectangles(it.Text, it.QrLevel, it.Width, it.Height));
+    }
+
+    private static void AppendCells(StringBuilder html, RenderedItem it, string box, string backCss, string borderCss,
+        IReadOnlyList<(double X, double Y, double W, double H)> cells)
+    {
         var colour = Css(it.ForeColor) ?? "#000";
-        var cells = QrLayout.Rectangles(it.Text, it.QrLevel, it.Width, it.Height);
         html.Append($"<svg style=\"{box}{backCss}{borderCss}\" viewBox=\"0 0 {Px(it.Width)} {Px(it.Height)}\" shape-rendering=\"crispEdges\">");
         if (cells.Count > 0)
         {

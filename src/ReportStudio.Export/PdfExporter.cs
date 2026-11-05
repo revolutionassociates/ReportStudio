@@ -65,9 +65,12 @@ public static class PdfExporter
                 DrawImage(doc, g, it);
                 break;
             case ItemKind.QrCode:
+            case ItemKind.Barcode2D:
             {
                 if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
-                var cells = QrLayout.Rectangles(it.Text, it.QrLevel, it.Width, it.Height);
+                var cells = it.Kind == ItemKind.Barcode2D
+                    ? Symbol2DLayout.Rectangles(it.Barcode2DType, it.Text, it.Width, it.Height)
+                    : QrLayout.Rectangles(it.Text, it.QrLevel, it.Width, it.Height);
                 if (cells.Count == 0) break;
 
                 // One filled path so viewers do not show hairline gaps between modules.

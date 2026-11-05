@@ -40,7 +40,8 @@ public class ReportDefinition
     /// <summary>True when running this report would execute a query taken from the file (needs the user's trust).</summary>
     [JsonIgnore]
     public bool HasOwnQuery =>
-        DataSource.Provider is not (DbProvider.Sample or DbProvider.Host) && !string.IsNullOrWhiteSpace(DataSource.Query);
+        DataSource.Provider is not (DbProvider.Sample or DbProvider.Host) &&
+        (!string.IsNullOrWhiteSpace(DataSource.Query) || Parameters.Any(p => !string.IsNullOrWhiteSpace(p.ChoicesQuery)));
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -239,12 +240,62 @@ public class ReportParameter
     public string Name { get; set; } = "";
     public string Prompt { get; set; } = "";
     public ParameterType Type { get; set; } = ParameterType.Text;
+
+    /// <summary>
+    /// The value offered first. Starting with = it is an expression worked out each time the report is run, e.g.
+    /// <c>=MonthStart(Today())</c> or <c>=FinancialYear(Today())</c>, so the date moves on by itself; the user reviews it in
+    /// the parameter window before running.
+    /// </summary>
     public string DefaultValue { get; set; } = "";
+
+    /// <summary>A fixed drop-down list: <c>Active;Inactive</c> or <c>A=Active;I=Inactive</c> (value first, shown text second).</summary>
+    public string Choices { get; set; } = "";
+
+    /// <summary>
+    /// A drop-down list read from the database: a query returning the value (first column) and optionally the shown text
+    /// (second). It runs on the report's connection and may use other parameters as @Name.
+    /// </summary>
+    public string ChoicesQuery { get; set; } = "";
+
+    /// <summary>Parameters (separated by ;) the choices query uses: the list is read again when one of them changes.</summary>
+    public string DependsOn { get; set; } = "";
+
+    /// <summary>The user may pick several values. The value is then a list: <c>In(Department, @Depts)</c> or SQL <c>IN (@Depts)</c>.</summary>
+    public bool MultiValue { get; set; }
+
+    /// <summary>The default as text: the plain default, or the result of its expression.</summary>
+    public string ResolveDefault(DateTime? now = null)
+    {
+        var text = DefaultValue ?? "";
+        if (!text.StartsWith('=')) return text;
+        try
+        {
+            var value = ReportStudio.Core.Expressions.Expr.Evaluate(text.Substring(1),
+                new ReportStudio.Core.Expressions.EvalContext { Now = now ?? DateTime.Now, Culture = System.Globalization.CultureInfo.InvariantCulture });
+            return value switch
+            {
+                null => "",
+                DateTime d => d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+                bool b => b ? "true" : "false",
+                IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
+                _ => value.ToString() ?? ""
+            };
+        }
+        catch (ReportStudio.Core.Expressions.ExpressionException)
+        {
+            return "";   // a default that cannot be worked out is simply empty
+        }
+    }
 
     public object? Parse(string? raw)
     {
-        raw ??= DefaultValue;
-        if (string.IsNullOrWhiteSpace(raw)) return null;
+        raw ??= ResolveDefault();
+        if (MultiValue) return new ValueList(ValueList.Split(raw).Select(ParseOne));
+        return string.IsNullOrWhiteSpace(raw) ? null : ParseOne(raw);
+    }
+
+    private object? ParseOne(string raw)
+    {
         var inv = System.Globalization.CultureInfo.InvariantCulture;
         return Type switch
         {

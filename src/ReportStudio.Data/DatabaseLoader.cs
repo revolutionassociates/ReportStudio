@@ -76,18 +76,38 @@ public sealed class DatabaseLoader : IDatabaseLoader
         cmd.CommandTimeout = ds.CommandTimeoutSeconds;
 
         // Bind ONLY parameters that the SQL text references, always as real DB parameters (never concatenated).
+        // A parameter where the user picked several values becomes a list of parameters: IN (@Dept) -> IN (@Dept_0, @Dept_1).
         var lookup = new Dictionary<string, object?>(parameters, StringComparer.OrdinalIgnoreCase);
+        var expanded = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var name in ParamToken.Matches(ds.Query).Select(m => m.Groups[1].Value)
                      .Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!lookup.TryGetValue(name, out var value) && !schemaOnly)
                 throw new InvalidOperationException(
                     $"The query uses @{name} but no report parameter with that name was supplied.");
+
+            if (value is ReportStudio.Core.Model.ValueList list)
+            {
+                var names = new List<string>();
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var item = cmd.CreateParameter();
+                    item.ParameterName = $"@{name}_{i}";
+                    item.Value = list[i] ?? DBNull.Value;
+                    cmd.Parameters.Add(item);
+                    names.Add(item.ParameterName);
+                }
+                expanded[name] = names.Count == 0 ? "NULL" : string.Join(", ", names);   // an empty list matches no rows
+                continue;
+            }
+
             var p = cmd.CreateParameter();
             p.ParameterName = "@" + name;
             p.Value = value ?? DBNull.Value;
             cmd.Parameters.Add(p);
         }
+        if (expanded.Count > 0)
+            cmd.CommandText = ParamToken.Replace(ds.Query, m => expanded.TryGetValue(m.Groups[1].Value, out var text) ? text : m.Value);
         return cmd;
     }
 }
