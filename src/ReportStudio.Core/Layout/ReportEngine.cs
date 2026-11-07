@@ -636,7 +636,8 @@ public static class ReportEngine
                     Bold = item.Bold, Italic = item.Italic, Underline = item.Underline,
                     HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
                     ForeColor = item.ForeColor, BackColor = item.BackColor,
-                    BorderColor = item.BorderColor, BorderWidth = item.BorderWidth
+                    BorderColor = item.BorderColor, BorderWidth = item.BorderWidth,
+                    CornerRadius = item.CornerRadius
                 };
                 ApplyRules(item, r, ctx);
                 ApplyInteraction(item, r, ctx);

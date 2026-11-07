@@ -252,6 +252,50 @@ internal sealed class PdfPage
             .Append(N(x)).Append(' ').Append(N(y)).Append(' ').Append(N(width)).Append(' ').Append(N(height)).Append(" re S\n");
     }
 
+    // A quarter of an ellipse drawn as one Bezier curve is this far (fraction of the radius) from its end points.
+    private const double Kappa = 0.5522847498307936;
+
+    /// <summary>
+    /// The outline of a box whose corners are quarter-ellipses of size <paramref name="rx"/> x <paramref name="ry"/>.
+    /// With rx = width / 2 and ry = height / 2 it is an ellipse; with 0 it is a plain rectangle.
+    /// </summary>
+    private static string ShapePath(double x, double y, double width, double height, double rx, double ry)
+    {
+        double kx = rx * Kappa, ky = ry * Kappa, right = x + width, bottom = y + height;
+        var p = new StringBuilder();
+        void Move(double px, double py) => p.Append(N(px)).Append(' ').Append(N(py)).Append(" m\n");
+        void LineTo(double px, double py) => p.Append(N(px)).Append(' ').Append(N(py)).Append(" l\n");
+        void Curve(double x1, double y1, double x2, double y2, double x3, double y3) =>
+            p.Append(N(x1)).Append(' ').Append(N(y1)).Append(' ').Append(N(x2)).Append(' ').Append(N(y2)).Append(' ')
+             .Append(N(x3)).Append(' ').Append(N(y3)).Append(" c\n");
+
+        Move(x + rx, y);
+        LineTo(right - rx, y);
+        Curve(right - rx + kx, y, right, y + ry - ky, right, y + ry);
+        LineTo(right, bottom - ry);
+        Curve(right, bottom - ry + ky, right - rx + kx, bottom, right - rx, bottom);
+        LineTo(x + rx, bottom);
+        Curve(x + rx - kx, bottom, x, bottom - ry + ky, x, bottom - ry);
+        LineTo(x, y + ry);
+        Curve(x, y + ry - ky, x + rx - kx, y, x + rx, y);
+        p.Append("h\n");
+        return p.ToString();
+    }
+
+    /// <summary>Fills a box with rounded corners (<paramref name="rx"/>, <paramref name="ry"/>) or, with half the width and height, an ellipse.</summary>
+    public void FillShape(double x, double y, double width, double height, double rx, double ry, Color color)
+    {
+        if (color.A == 0 || width <= 0 || height <= 0) return;
+        _content.Append(Rgb(color)).Append(" rg\n").Append(ShapePath(x, y, width, height, rx, ry)).Append("f\n");
+    }
+
+    /// <summary>The outline is centred on the edge, like a GDI+ pen.</summary>
+    public void StrokeShape(double x, double y, double width, double height, double rx, double ry, Color color, double lineWidth)
+    {
+        if (color.A == 0 || lineWidth <= 0 || width <= 0 || height <= 0) return;
+        _content.Append(Rgb(color)).Append(" RG ").Append(N(lineWidth)).Append(" w\n").Append(ShapePath(x, y, width, height, rx, ry)).Append("S\n");
+    }
+
     public void Line(double x1, double y1, double x2, double y2, Color color, double lineWidth)
     {
         if (color.A == 0 || lineWidth <= 0) return;

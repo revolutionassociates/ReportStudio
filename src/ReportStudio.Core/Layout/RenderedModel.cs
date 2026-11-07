@@ -29,6 +29,8 @@ public class RenderedItem
     public string BackColor { get; set; } = "";
     public string BorderColor { get; set; } = "";
     public double BorderWidth { get; set; }
+    /// <summary>Corner rounding of a box, in pixels (0 = square). See <see cref="ShapeGeometry.CornerRadius"/> for the usable value.</summary>
+    public double CornerRadius { get; set; }
     /// <summary>Cleaned hyperlink address (http, https, mailto, tel, or #Bookmark), or "" for none. See <see cref="LinkTarget"/>.</summary>
     public string Link { get; set; } = "";
     /// <summary>Name of the bookmark placed at this item, or "".</summary>

@@ -57,6 +57,17 @@ public static class PdfExporter
                 g.Line(it.X, it.Y, it.X + it.Width, it.Y + it.Height, ink, Math.Max(0.5, it.BorderWidth));
                 return;
             case ItemKind.Rectangle:
+            case ItemKind.Ellipse:
+                bool ellipse = it.Kind == ItemKind.Ellipse;
+                double rx = ellipse ? it.Width / 2 : ShapeGeometry.CornerRadius(it.CornerRadius, it.Width, it.Height);
+                double ry = ellipse ? it.Height / 2 : rx;
+                if (ellipse || rx > 0)
+                {
+                    if (back != null) g.FillShape(it.X, it.Y, it.Width, it.Height, rx, ry, back.Value);
+                    if (it.BorderWidth > 0)
+                        g.StrokeShape(it.X, it.Y, it.Width, it.Height, rx, ry, border ?? ink, it.BorderWidth);
+                    return;
+                }
                 if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
                 if (it.BorderWidth > 0)
                     g.StrokeRectangle(it.X, it.Y, it.Width, it.Height, border ?? ink, it.BorderWidth);

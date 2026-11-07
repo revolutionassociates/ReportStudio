@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 namespace ReportStudio.Core.Model;
 
-public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D }
+public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D, Ellipse }
 public enum CrossAggregate { Sum, Count, Average, Min, Max }
 public enum HAlign { Left, Center, Right }
 public enum VAlign { Top, Middle, Bottom }
@@ -122,6 +122,9 @@ public class ReportItem
 
     [Category("Appearance")] public double BorderWidth { get; set; }
 
+    [Category("Appearance"), Description("Rounds the corners of a box (Kind = Rectangle), in pixels. 0 = square corners. A value larger than half the shorter side makes the ends fully round.")]
+    public double CornerRadius { get; set; }
+
     // ---- Barcode (Kind = Barcode; the value to encode is Text, e.g. "{EmpCode}") ----
     [Category("Barcode")] public ReportStudio.Core.Barcodes.BarcodeType BarcodeType { get; set; }
 
@@ -133,7 +136,7 @@ public class ReportItem
     public ReportStudio.Core.Barcodes.QrLevel QrLevel { get; set; } = ReportStudio.Core.Barcodes.QrLevel.Medium;
 
     // ---- Two-dimensional code (Kind = Barcode2D; the value to encode is Text, e.g. "{PartNo}") ----
-    [Category("2D code"), Description("Which code: Data Matrix. The value to encode is the Text, e.g. {PartNo}. An unreadable or too long value prints nothing and gives a warning.")]
+    [Category("2D code"), Description("Which code: Data Matrix (small and square), PDF417 (wide, for long values; make the box wider than tall) or Aztec (square, read from any angle). The value to encode is the Text, e.g. {PartNo}. An unreadable or too long value prints nothing and gives a warning.")]
     public ReportStudio.Core.Barcodes.Barcode2DType Barcode2DType { get; set; }
 
     // ---- Sub-report (Kind = SubReport): another report drawn inside this band, as wide as this element ----

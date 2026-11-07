@@ -105,6 +105,7 @@ public static class ItemArrange
         to.BackColor = from.BackColor;
         to.BorderColor = from.BorderColor;
         to.BorderWidth = from.BorderWidth;
+        to.CornerRadius = from.CornerRadius;
         to.Format = from.Format;
     }
 

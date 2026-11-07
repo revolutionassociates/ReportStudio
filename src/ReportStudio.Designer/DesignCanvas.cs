@@ -7,7 +7,7 @@ using ReportStudio.Export;
 
 namespace ReportStudio.Designer;
 
-public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D }
+public enum DesignTool { Select, Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D, Ellipse }
 public enum AlignKind { Left, Right, Top, Bottom, SameWidth, SameHeight }
 
 /// <summary>
@@ -234,7 +234,7 @@ public sealed class DesignCanvas : Control
             FontFamily = ReportItem.DefaultFontFamily, FontSize = 9
         };
         if (kind == ItemKind.Line) { item.Height = 0; item.BorderWidth = 1; item.ForeColor = "#555555"; }
-        if (kind == ItemKind.Rectangle) { item.BorderWidth = 1; item.BorderColor = "#555555"; }
+        if (kind is ItemKind.Rectangle or ItemKind.Ellipse) { item.BorderWidth = 1; item.BorderColor = "#555555"; }
         if (kind == ItemKind.Text) item.VAlign = VAlign.Middle;
 
         band.Items.Add(item);
@@ -548,7 +548,7 @@ public sealed class DesignCanvas : Control
             Bold = item.Bold, Italic = item.Italic, Underline = item.Underline,
             HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
             ForeColor = item.ForeColor, BackColor = item.BackColor,
-            BorderColor = item.BorderColor, BorderWidth = item.BorderWidth,
+            BorderColor = item.BorderColor, BorderWidth = item.BorderWidth, CornerRadius = item.CornerRadius,
             Image = DecodeImage(item),
             BarcodeType = item.BarcodeType, QrLevel = item.QrLevel, Barcode2DType = item.Barcode2DType
         };
@@ -810,6 +810,7 @@ public sealed class DesignCanvas : Control
             {
                 DesignTool.Line => ItemKind.Line,
                 DesignTool.Rectangle => ItemKind.Rectangle,
+                DesignTool.Ellipse => ItemKind.Ellipse,
                 DesignTool.Image => ItemKind.Image,
                 DesignTool.Barcode => ItemKind.Barcode,
                 DesignTool.QrCode => ItemKind.QrCode,
@@ -821,7 +822,7 @@ public sealed class DesignCanvas : Control
             };
             if (w < 8) w = kind == ItemKind.Line ? 120 : kind == ItemKind.Barcode ? 160 : kind == ItemKind.QrCode || kind == ItemKind.Barcode2D ? 80 : kind == ItemKind.SubReport ? 300 : kind == ItemKind.CrossTab ? 400 : kind == ItemKind.Contents ? 400 : 100;
             if (h < 8 && kind != ItemKind.Line)
-                h = kind == ItemKind.Image ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode || kind == ItemKind.Barcode2D ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : kind == ItemKind.Contents ? 200 : 20;
+                h = kind == ItemKind.Image || kind == ItemKind.Ellipse ? 60 : kind == ItemKind.Barcode ? 50 : kind == ItemKind.QrCode || kind == ItemKind.Barcode2D ? 80 : kind == ItemKind.SubReport ? 60 : kind == ItemKind.CrossTab ? 80 : kind == ItemKind.Contents ? 200 : 20;
 
             var item = AddItem(kind, box.Band, Math.Max(0, Snap(x)), Math.Max(0, Snap(y)), Snap(w), Snap(h),
                 kind == ItemKind.Text ? "Text" : kind == ItemKind.Barcode ? "1234567890" : kind == ItemKind.QrCode ? "https://example.com" : kind == ItemKind.Barcode2D ? "ReportStudio 2D" : "");

@@ -135,6 +135,7 @@ internal sealed class MainForm : Form
         AddToolButton(bar, DesignTool.Text, "Text / field");
         AddToolButton(bar, DesignTool.Line, "Line");
         AddToolButton(bar, DesignTool.Rectangle, "Box");
+        AddToolButton(bar, DesignTool.Ellipse, "Ellipse");
         AddToolButton(bar, DesignTool.Image, "Image");
         AddToolButton(bar, DesignTool.Barcode, "Barcode");
         AddToolButton(bar, DesignTool.QrCode, "QR code");

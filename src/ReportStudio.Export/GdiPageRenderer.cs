@@ -47,9 +47,25 @@ public static class GdiPageRenderer
                 return;
             }
             case ItemKind.Rectangle:
+            case ItemKind.Ellipse:
             {
-                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
                 var bc = border ?? ColorUtil.Parse(item.ForeColor) ?? Color.Black;
+                bool ellipse = item.Kind == ItemKind.Ellipse;
+                double radius = ellipse ? 0 : ShapeGeometry.CornerRadius(item.CornerRadius, rect.Width, rect.Height);
+                if (ellipse || radius > 0)
+                {
+                    if (rect.Width <= 0 || rect.Height <= 0) return;
+                    using var path = ellipse ? EllipsePath(rect) : RoundedPath(rect, (float)radius);
+                    if (back != null) { using var b = new SolidBrush(back.Value); g.FillPath(b, path); }
+                    if (item.BorderWidth > 0)
+                    {
+                        using var outline = new Pen(bc, (float)item.BorderWidth);
+                        g.DrawPath(outline, path);
+                    }
+                    return;
+                }
+
+                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
                 if (item.BorderWidth > 0)
                 {
                     using var pen = new Pen(bc, (float)item.BorderWidth);
@@ -83,6 +99,25 @@ public static class GdiPageRenderer
             using var pen = new Pen(border.Value, (float)item.BorderWidth);
             g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
         }
+    }
+
+    private static GraphicsPath EllipsePath(RectangleF rect)
+    {
+        var path = new GraphicsPath();
+        path.AddEllipse(rect);
+        return path;
+    }
+
+    private static GraphicsPath RoundedPath(RectangleF rect, float radius)
+    {
+        float d = radius * 2;
+        var path = new GraphicsPath();
+        path.AddArc(rect.Left, rect.Top, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Top, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.Left, rect.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
     }
 
     private static void DrawQr(Graphics g, RenderedItem item, RectangleF rect)

@@ -113,9 +113,12 @@ public static class HtmlExporter
                 return;
             }
             case ItemKind.Rectangle:
+            case ItemKind.Ellipse:
             {
                 string edge = it.BorderWidth > 0 ? $";border:{Px(it.BorderWidth)}px solid {border ?? Css(it.ForeColor) ?? "#000"}" : "";
-                html.Append($"<div style=\"{box}{backCss}{edge}\"></div>\n");
+                double radius = it.Kind == ItemKind.Rectangle ? ShapeGeometry.CornerRadius(it.CornerRadius, it.Width, it.Height) : 0;
+                string round = it.Kind == ItemKind.Ellipse ? ";border-radius:50%" : radius > 0 ? $";border-radius:{Px(radius)}px" : "";
+                html.Append($"<div style=\"{box}{backCss}{edge}{round}\"></div>\n");
                 return;
             }
             case ItemKind.Image:

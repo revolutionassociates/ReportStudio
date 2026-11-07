@@ -4,7 +4,11 @@ namespace ReportStudio.Core.Barcodes;
 public enum Barcode2DType
 {
     /// <summary>Data Matrix ECC 200: small square codes for parts, labels and pharma; up to about 173 characters or 348 digits.</summary>
-    DataMatrix
+    DataMatrix,
+    /// <summary>PDF417: a wide stacked code for long values such as payslip details, tickets and ID cards; up to about 1100 characters or 2700 digits.</summary>
+    Pdf417,
+    /// <summary>Aztec Code: a compact square code that is read from any angle; used on tickets and boarding passes. Up to about 3000 letters.</summary>
+    Aztec
 }
 
 /// <summary>One entry point for the two-dimensional codes: the dark modules of the symbol, row by row.</summary>
@@ -22,6 +26,11 @@ public static class Symbol2D
         rowHeight = 1;
         switch (type)
         {
+            case Barcode2DType.Pdf417:
+                rowHeight = Pdf417Encoder.RowHeight;
+                return Pdf417Encoder.TryEncode(text, out modules, out error);
+            case Barcode2DType.Aztec:
+                return AztecEncoder.TryEncode(text, out modules, out error);
             default:
                 return DataMatrixEncoder.TryEncode(text, out modules, out error);
         }
