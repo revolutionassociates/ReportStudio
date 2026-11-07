@@ -549,6 +549,7 @@ public sealed class DesignCanvas : Control
             HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
             ForeColor = item.ForeColor, BackColor = item.BackColor,
             BorderColor = item.BorderColor, BorderWidth = item.BorderWidth, CornerRadius = item.CornerRadius,
+            GradientColor = item.GradientColor, GradientDirection = item.GradientDirection,
             Image = DecodeImage(item),
             BarcodeType = item.BarcodeType, QrLevel = item.QrLevel, Barcode2DType = item.Barcode2DType
         };

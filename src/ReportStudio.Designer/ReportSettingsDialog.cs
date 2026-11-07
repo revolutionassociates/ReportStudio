@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using ReportStudio.Core.Data;
 using ReportStudio.Core.Model;
+using ReportStudio.Export;
 
 namespace ReportStudio.Designer;
 
@@ -34,6 +35,19 @@ public sealed class ReportSettingsDialog : Form
     private readonly ComboBox _pageSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly NumericUpDown _mL = NewMargin(), _mR = NewMargin(), _mT = NewMargin(), _mB = NewMargin();
 
+    // page look: background
+    private readonly TextBox _bgColor = new() { Width = 100 };
+    private readonly TextBox _bgGradient = new() { Width = 100 };
+    private readonly ComboBox _bgDirection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 140 };
+
+    // page look: watermark
+    private readonly TextBox _wmText = new() { Width = 320 };
+    private readonly TextBox _wmColor = new() { Width = 100 };
+    private readonly NumericUpDown _wmOpacity = new() { Minimum = 0, Maximum = 100, Width = 80 };
+    private readonly NumericUpDown _wmAngle = new() { Minimum = -360, Maximum = 360, Width = 80 };
+    private readonly NumericUpDown _wmSize = new() { Minimum = 6, Maximum = 600, Width = 80 };
+    private readonly CheckBox _wmBold = new() { Text = "Bold", AutoSize = true };
+
     private static readonly (string Label, double W, double H)[] PageSizes =
     {
         ("A4 portrait", 794, 1123), ("A4 landscape", 1123, 794),
@@ -53,6 +67,7 @@ public sealed class ReportSettingsDialog : Form
 
         var tabs = new TabControl { Dock = DockStyle.Fill };
         tabs.TabPages.Add(BuildGeneralTab());
+        tabs.TabPages.Add(BuildPageLookTab());
         tabs.TabPages.Add(BuildDataTab());
         tabs.TabPages.Add(BuildParametersTab());
         tabs.TabPages.Add(BuildGroupsTab());
@@ -92,6 +107,39 @@ public sealed class ReportSettingsDialog : Form
         AddRow(t, "Margin right (px)", _mR);
         AddRow(t, "Margin top (px)", _mT);
         AddRow(t, "Margin bottom (px)", _mB);
+        page.Controls.Add(t);
+        return page;
+    }
+
+    private TabPage BuildPageLookTab()
+    {
+        var page = new TabPage("Page look") { Padding = new Padding(12) };
+        var t = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        t.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+        _bgDirection.Items.AddRange(new object[] { "Top to bottom", "Left to right" });
+        AddRow(t, "Page colour (hex)", _bgColor);
+        AddRow(t, "Gradient colour (hex)", _bgGradient);
+        AddRow(t, "Gradient direction", _bgDirection);
+        AddRow(t, "", new Label { Text = "", AutoSize = true, Height = 12 });
+        AddRow(t, "Watermark text", _wmText);
+        AddRow(t, "Colour (hex)", _wmColor);
+        AddRow(t, "Opacity (%)", _wmOpacity);
+        AddRow(t, "Angle (degrees)", _wmAngle);
+        AddRow(t, "Font size (pt)", _wmSize);
+        AddRow(t, "", _wmBold);
+
+        var hint = new Label
+        {
+            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 10, 0, 0), MaximumSize = new Size(680, 0),
+            Text = "The page colour fills the whole page behind everything else; add a gradient colour to fade from the page colour to it. " +
+                   "Leave the page colour empty for a plain page. " +
+                   "The watermark is faint text behind the content of every page, such as DRAFT or CONFIDENTIAL. " +
+                   "It may use {expressions}, e.g. {@Status}. Leave the text empty for no watermark. " +
+                   "Angle 0 runs straight along the page, 45 rises to the right. A long text is made smaller to fit the page."
+        };
+        page.Controls.Add(hint);
         page.Controls.Add(t);
         return page;
     }
@@ -315,6 +363,18 @@ public sealed class ReportSettingsDialog : Form
         _mT.Value = Clamp(_def.Page.MarginTop);
         _mB.Value = Clamp(_def.Page.MarginBottom);
 
+        _bgColor.Text = _def.Background.Color;
+        _bgGradient.Text = _def.Background.GradientColor;
+        _bgDirection.SelectedIndex = _def.Background.Direction == GradientDirection.LeftToRight ? 1 : 0;
+
+        var wm = _def.Watermark;
+        _wmText.Text = wm.Text;
+        _wmColor.Text = wm.Color;
+        _wmOpacity.Value = (decimal)Math.Clamp(Math.Round(wm.Opacity * 100), 0, 100);
+        _wmAngle.Value = (decimal)Math.Clamp(Math.Round(wm.Angle), -360, 360);
+        _wmSize.Value = (decimal)Math.Clamp(Math.Round(wm.FontSize), 6, 600);
+        _wmBold.Checked = wm.Bold;
+
         _provider.SelectedIndex = (int)_def.DataSource.Provider;
         UpdateHostState();
         _connection.Text = _def.DataSource.ConnectionString;
@@ -379,6 +439,34 @@ public sealed class ReportSettingsDialog : Form
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
+
+        // The page colours are checked here too, before anything is stored.
+        foreach (var (box, what) in new[] { (_bgColor, "page"), (_bgGradient, "gradient") })
+            if (box.Text.Trim().Length > 0 && ColorUtil.Parse(box.Text) == null)
+            {
+                MessageBox.Show(this, $"The {what} colour is not valid. Write it as #RRGGBB, for example #FFF8E1.", Text,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+
+        _def.Background.Color = _bgColor.Text.Trim();
+        _def.Background.GradientColor = _bgGradient.Text.Trim();
+        _def.Background.Direction = _bgDirection.SelectedIndex == 1 ? GradientDirection.LeftToRight : GradientDirection.TopToBottom;
+
+        // The watermark colour is checked here too, before anything is stored.
+        if (_wmText.Text.Trim().Length > 0 && ColorUtil.Parse(_wmColor.Text) == null)
+        {
+            MessageBox.Show(this, "The watermark colour is not valid. Write it as #RRGGBB, for example #9CA3AF.", Text,
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        _def.Watermark.Text = _wmText.Text.Trim();
+        _def.Watermark.Color = _wmColor.Text.Trim();
+        _def.Watermark.Opacity = (double)_wmOpacity.Value / 100;
+        _def.Watermark.Angle = (double)_wmAngle.Value;
+        _def.Watermark.FontSize = (double)_wmSize.Value;
+        _def.Watermark.Bold = _wmBold.Checked;
 
         _def.Name = string.IsNullOrWhiteSpace(_name.Text) ? "Untitled Report" : _name.Text.Trim();
         _def.Filter = _filter.Text.Trim();

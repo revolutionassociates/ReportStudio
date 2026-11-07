@@ -15,6 +15,13 @@ public class ReportDefinition
     public string Title { get; set; } = "";
 
     public PageSettings Page { get; set; } = new();
+
+    /// <summary>Faint text behind the content of every page (DRAFT, CONFIDENTIAL, ...). Empty text = none.</summary>
+    public WatermarkSettings Watermark { get; set; } = new();
+
+    /// <summary>A colour, or a two-colour gradient, behind the whole of every page. No colour = the plain page.</summary>
+    public PageBackgroundSettings Background { get; set; } = new();
+
     public DataSourceDefinition DataSource { get; set; } = new();
     public List<ReportParameter> Parameters { get; set; } = new();
     public List<GroupDefinition> Groups { get; set; } = new();
@@ -97,6 +104,11 @@ public class ReportDefinition
             DataSource.ConnectionString = "";
         }
 
+        Watermark ??= new WatermarkSettings();      // a file may carry "Watermark": null
+        Watermark.Normalize();
+        Background ??= new PageBackgroundSettings();
+        Background.Normalize();
+
         // A variable needs a usable name; the first of two with the same name wins.
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         Variables.RemoveAll(v => v == null || !IsValidVariableName(v.Name) || !seen.Add(v.Name));
@@ -137,6 +149,57 @@ public class PageSettings
     {
         Width = landscape ? 1123 : 794;
         Height = landscape ? 794 : 1123;
+    }
+}
+
+/// <summary>The colour behind a whole page: one colour, or a gradient from it to a second colour.</summary>
+public class PageBackgroundSettings
+{
+    /// <summary>Hex colour such as #FFF8E1. Empty = no background (the plain page).</summary>
+    public string Color { get; set; } = "";
+
+    /// <summary>Second colour (hex) of a gradient. Empty = a single colour. Needs <see cref="Color"/>.</summary>
+    public string GradientColor { get; set; } = "";
+
+    public GradientDirection Direction { get; set; }
+
+    public void Normalize()
+    {
+        Color = (Color ?? "").Trim();
+        GradientColor = (GradientColor ?? "").Trim();
+    }
+}
+
+/// <summary>Text printed faintly behind the content of every page, turned to any angle: DRAFT, CONFIDENTIAL, a status from a parameter.</summary>
+public class WatermarkSettings
+{
+    public const string DefaultColor = "#9CA3AF";
+
+    /// <summary>The words, with {expressions} like any other text (e.g. {@Status}). Empty = no watermark.</summary>
+    public string Text { get; set; } = "";
+
+    /// <summary>Hex colour such as #9CA3AF.</summary>
+    public string Color { get; set; } = DefaultColor;
+
+    /// <summary>0 = invisible, 1 = solid.</summary>
+    public double Opacity { get; set; } = 0.3;
+
+    /// <summary>Degrees, turned counter-clockwise: 0 = straight along the page, 45 = rising to the right.</summary>
+    public double Angle { get; set; } = 45;
+
+    /// <summary>Font size in points. Text that would run off the page is made smaller so it always fits.</summary>
+    public double FontSize { get; set; } = 72;
+
+    public bool Bold { get; set; } = true;
+
+    /// <summary>Puts every value in its usable range (a file may carry anything).</summary>
+    public void Normalize()
+    {
+        Text ??= "";
+        Color = string.IsNullOrWhiteSpace(Color) ? DefaultColor : Color.Trim();
+        Opacity = double.IsFinite(Opacity) ? Math.Clamp(Opacity, 0, 1) : 0.3;
+        Angle = double.IsFinite(Angle) ? Math.Clamp(Angle, -360, 360) : 45;
+        FontSize = double.IsFinite(FontSize) ? Math.Clamp(FontSize, 6, 600) : 72;
     }
 }
 

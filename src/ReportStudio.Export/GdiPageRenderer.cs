@@ -25,9 +25,54 @@ public static class GdiPageRenderer
 
         if (paintBackground) g.Clear(Color.White);
 
+        DrawBackground(g, page);        // first of all
+        DrawWatermark(g, page);         // then the watermark, behind the items
+
         foreach (var item in page.Items)
             DrawItem(g, item);
 
+        g.Restore(state);
+    }
+
+    /// <summary>The colour or gradient behind the whole page. A colour that cannot be read leaves the page plain.</summary>
+    private static void DrawBackground(Graphics g, RenderedPage page)
+    {
+        var bg = page.Background;
+        if (bg == null || page.Width <= 0 || page.Height <= 0 || ColorUtil.Parse(bg.Color) is not { } color) return;
+
+        var pageRect = new RectangleF(0, 0, (float)page.Width, (float)page.Height);
+        using var brush = FillBrush(pageRect, color, bg.GradientColor, bg.GradientDirection);
+        // a pixel beyond the page on every side, so a scale that is not a whole number leaves no white hairline at the edge
+        g.FillRectangle(brush, -1, -1, pageRect.Width + 2, pageRect.Height + 2);
+    }
+
+    /// <summary>Faint text turned about the page centre. A text too long for the page is made smaller until it fits.</summary>
+    private static void DrawWatermark(Graphics g, RenderedPage page)
+    {
+        var wm = page.Watermark;
+        if (wm == null || string.IsNullOrWhiteSpace(wm.Text) || page.Width <= 0 || page.Height <= 0) return;
+        int alpha = WatermarkLayout.Alpha(wm.Opacity);
+        if (alpha == 0) return;
+
+        var text = wm.Text.Replace('\r', ' ').Replace('\n', ' ');
+        var color = ColorUtil.Parse(wm.Color) ?? Color.Gray;
+        using var format = new StringFormat(StringFormat.GenericTypographic)
+        {
+            Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center,
+            FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
+        };
+
+        double size = wm.FontSize;
+        using (var probe = CreateFont(ReportItem.DefaultFontFamily, size, wm.Bold, false, false))
+            size = WatermarkLayout.FitFontSize(size, g.MeasureString(text, probe, PointF.Empty, format).Width, page.Width, page.Height, wm.Angle);
+
+        using var font = CreateFont(ReportItem.DefaultFontFamily, size, wm.Bold, false, false);
+        using var brush = new SolidBrush(Color.FromArgb(alpha, color.R, color.G, color.B));
+        var state = g.Save();
+        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;       // ClearType cannot blend with a see-through colour
+        g.TranslateTransform((float)page.Width / 2, (float)page.Height / 2);
+        g.RotateTransform((float)-wm.Angle);                            // GDI+ turns clockwise; the setting turns counter-clockwise
+        g.DrawString(text, font, brush, PointF.Empty, format);
         g.Restore(state);
     }
 
@@ -56,7 +101,7 @@ public static class GdiPageRenderer
                 {
                     if (rect.Width <= 0 || rect.Height <= 0) return;
                     using var path = ellipse ? EllipsePath(rect) : RoundedPath(rect, (float)radius);
-                    if (back != null) { using var b = new SolidBrush(back.Value); g.FillPath(b, path); }
+                    if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillPath(b, path); }
                     if (item.BorderWidth > 0)
                     {
                         using var outline = new Pen(bc, (float)item.BorderWidth);
@@ -65,7 +110,7 @@ public static class GdiPageRenderer
                     return;
                 }
 
-                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
+                if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillRectangle(b, rect); }
                 if (item.BorderWidth > 0)
                 {
                     using var pen = new Pen(bc, (float)item.BorderWidth);
@@ -89,7 +134,7 @@ public static class GdiPageRenderer
                 DrawCells(g, item, rect, Symbol2DLayout.Rectangles(item.Barcode2DType, item.Text, rect.Width, rect.Height));
                 break;
             case ItemKind.Text:
-                if (back != null) { using var b = new SolidBrush(back.Value); g.FillRectangle(b, rect); }
+                if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillRectangle(b, rect); }
                 DrawText(g, item, rect);
                 break;
         }
@@ -99,6 +144,22 @@ public static class GdiPageRenderer
             using var pen = new Pen(border.Value, (float)item.BorderWidth);
             g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
         }
+    }
+
+    /// <summary>The brush for an item's fill: a gradient from the back colour to the gradient colour, or the plain back colour.</summary>
+    private static Brush FillBrush(RenderedItem item, RectangleF rect, Color back) =>
+        FillBrush(rect, back, ShapeGeometry.UsesGradient(item) ? item.GradientColor : "", item.GradientDirection);
+
+    /// <summary>The same, from the pieces: a gradient when <paramref name="gradientColor"/> is a readable colour, otherwise the plain colour.</summary>
+    private static Brush FillBrush(RectangleF rect, Color back, string gradientColor, GradientDirection direction)
+    {
+        if (!string.IsNullOrWhiteSpace(gradientColor) && ColorUtil.Parse(gradientColor) is { } second && rect.Width > 0 && rect.Height > 0)
+        {
+            var mode = direction == GradientDirection.LeftToRight ? LinearGradientMode.Horizontal : LinearGradientMode.Vertical;
+            // TileFlipXY keeps the first and last pixel rows from picking up the opposite colour at the edge.
+            return new LinearGradientBrush(rect, back, second, mode) { WrapMode = WrapMode.TileFlipXY };
+        }
+        return new SolidBrush(back);
     }
 
     private static GraphicsPath EllipsePath(RectangleF rect)

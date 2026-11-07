@@ -55,7 +55,8 @@ public static class HtmlExporter
         foreach (var page in report.Pages)
         {
             html.Append("<section class=\"page\" style=\"width:").Append(Px(page.Width)).Append("px;height:")
-                .Append(Px(page.Height)).Append("px\">\n");
+                .Append(Px(page.Height)).Append("px").Append(BackgroundCss(page.Background)).Append("\">\n");
+            AppendWatermark(html, page);        // first, so it lies behind the items
             foreach (var item in page.Items) { AppendItem(html, item); AppendInteraction(html, item); }
             html.Append("</section>\n");
         }
@@ -67,6 +68,42 @@ public static class HtmlExporter
     }
 
     // ---------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// The style that paints the page: a colour or a linear gradient. A colour that cannot be read leaves the page white.
+    /// The print hints make browsers print the colour instead of dropping it to save ink.
+    /// </summary>
+    private static string BackgroundCss(RenderedBackground? bg)
+    {
+        if (bg == null || Css(bg.Color) is not { } back) return "";
+        const string keep = ";print-color-adjust:exact;-webkit-print-color-adjust:exact";
+        if (!string.IsNullOrWhiteSpace(bg.GradientColor) && Css(bg.GradientColor) is { } second)
+            return $";background:linear-gradient({(bg.GradientDirection == GradientDirection.LeftToRight ? "to right" : "to bottom")},{back},{second}){keep}";
+        return $";background:{back}{keep}";
+    }
+
+    /// <summary>
+    /// Faint text turned about the page centre. The browser lays the text out itself, so its width is only estimated
+    /// (a little over half the font size per letter) to shrink a very long text; the page clips whatever is left over.
+    /// </summary>
+    private static void AppendWatermark(StringBuilder html, RenderedPage page)
+    {
+        var wm = page.Watermark;
+        if (wm == null || string.IsNullOrWhiteSpace(wm.Text) || page.Width <= 0 || page.Height <= 0) return;
+        if (WatermarkLayout.Alpha(wm.Opacity) == 0) return;
+
+        var text = wm.Text.Replace('\r', ' ').Replace('\n', ' ');
+        double size = wm.FontSize * 96.0 / 72.0;                // points -> CSS pixels
+        size = WatermarkLayout.FitFontSize(size, text.Length * size * (wm.Bold ? 0.62 : 0.56), page.Width, page.Height, wm.Angle);
+        var inv = CultureInfo.InvariantCulture;
+
+        html.Append("<div style=\"left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;pointer-events:none\">")
+            .Append("<span style=\"white-space:nowrap;font-size:").Append(Px(size)).Append("px;font-weight:").Append(wm.Bold ? "700" : "400")
+            .Append(";color:").Append(Css(wm.Color) ?? "#9ca3af")
+            .Append(";opacity:").Append(Math.Round(Math.Clamp(wm.Opacity, 0, 1), 2).ToString("0.##", inv))
+            .Append(";transform:rotate(").Append((-wm.Angle).ToString("0.##", inv)).Append("deg)\">")     // CSS turns clockwise
+            .Append(WebUtility.HtmlEncode(text)).Append("</span></div>\n");
+    }
 
     /// <summary>A bookmark becomes an anchor at the item; a link becomes a transparent clickable box over it.</summary>
     private static void AppendInteraction(StringBuilder html, RenderedItem it)
@@ -100,7 +137,10 @@ public static class HtmlExporter
         string box = $"left:{Px(it.X)}px;top:{Px(it.Y)}px;width:{Px(it.Width)}px;height:{Px(it.Height)}px";
         string borderCss = border != null && it.BorderWidth > 0
             ? $";border:{Px(it.BorderWidth)}px solid {border}" : "";
-        string backCss = back != null ? $";background:{back}" : "";
+        string backCss = back == null ? ""
+            : ShapeGeometry.UsesGradient(it) && Css(it.GradientColor) is { } second
+                ? $";background:linear-gradient({(it.GradientDirection == GradientDirection.LeftToRight ? "to right" : "to bottom")},{back},{second})"
+                : $";background:{back}";
 
         switch (it.Kind)
         {

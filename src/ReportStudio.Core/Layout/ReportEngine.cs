@@ -518,6 +518,28 @@ public static class ReportEngine
 
         // ---- pages ----------------------------------------------------------------------------
 
+        /// <summary>The page's watermark with its {expressions} filled in ({Page} and parameters work), or null when there is none.</summary>
+        private RenderedWatermark? MakeWatermark()
+        {
+            var w = _def.Watermark;
+            if (w == null || string.IsNullOrWhiteSpace(w.Text) || !(w.Opacity > 0)) return null;
+            var row = _rows.Count > 0 ? _rows[0] : _emptyRow;
+            var text = SafeText(w.Text, "", Ctx(row, _rows)).Trim();
+            if (text.Length == 0) return null;
+            return new RenderedWatermark
+            {
+                Text = text, Color = w.Color, Opacity = w.Opacity, Angle = w.Angle, FontSize = w.FontSize, Bold = w.Bold
+            };
+        }
+
+        /// <summary>The colour behind each page, or null when none is set (a gradient colour alone is not enough: it needs the first colour).</summary>
+        private RenderedBackground? MakeBackground()
+        {
+            var b = _def.Background;
+            if (b == null || string.IsNullOrWhiteSpace(b.Color)) return null;
+            return new RenderedBackground { Color = b.Color, GradientColor = b.GradientColor ?? "", GradientDirection = b.Direction };
+        }
+
         private void BeginPage(bool first)
         {
             _sectionPage++;
@@ -526,6 +548,8 @@ public static class ReportEngine
                 Number = ++_pageNumber, Section = _section,
                 Width = _def.Page.Width, Height = _def.Page.Height
             };
+            _page.Watermark = MakeWatermark();
+            _page.Background = MakeBackground();
             _result.Pages.Add(_page);
             _y = _def.Page.MarginTop;
             _bandInstance = 0;
@@ -637,7 +661,8 @@ public static class ReportEngine
                     HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
                     ForeColor = item.ForeColor, BackColor = item.BackColor,
                     BorderColor = item.BorderColor, BorderWidth = item.BorderWidth,
-                    CornerRadius = item.CornerRadius
+                    CornerRadius = item.CornerRadius,
+                    GradientColor = item.GradientColor, GradientDirection = item.GradientDirection
                 };
                 ApplyRules(item, r, ctx);
                 ApplyInteraction(item, r, ctx);

@@ -4,6 +4,8 @@ using System.Text.Json.Serialization;
 namespace ReportStudio.Core.Model;
 
 public enum ItemKind { Text, Line, Rectangle, Image, Barcode, QrCode, SubReport, CrossTab, Contents, Barcode2D, Ellipse }
+/// <summary>Which way a gradient fill changes colour: from the back colour at the start to the gradient colour at the end.</summary>
+public enum GradientDirection { TopToBottom, LeftToRight }
 public enum CrossAggregate { Sum, Count, Average, Min, Max }
 public enum HAlign { Left, Center, Right }
 public enum VAlign { Top, Middle, Bottom }
@@ -116,6 +118,14 @@ public class ReportItem
     [Category("Appearance"), Description("Hex colour fill. Empty = transparent."),
      Editor(ColorEditor, EditorBase)]
     public string BackColor { get; set; } = "";
+
+    [Category("Appearance"), Description("Second colour of a gradient fill (hex). The fill then runs from Back colour to this colour. " +
+                                          "Empty = solid fill. Works on boxes, ellipses and text boxes; needs a Back colour."),
+     Editor(ColorEditor, EditorBase)]
+    public string GradientColor { get; set; } = "";
+
+    [Category("Appearance"), Description("Which way the gradient runs: top to bottom, or left to right.")]
+    public GradientDirection GradientDirection { get; set; }
 
     [Category("Appearance"), Editor(ColorEditor, EditorBase)]
     public string BorderColor { get; set; } = "";

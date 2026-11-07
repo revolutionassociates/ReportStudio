@@ -17,6 +17,9 @@ internal sealed class PdfDocument
     private readonly Dictionary<TrueTypeFont, PdfFontResource> _fonts = new();
     private readonly Dictionary<string, PdfImageResource> _images = new();
 
+    private readonly Dictionary<string, (string Name, Color From, Color To, bool Horizontal)> _shadings = new();
+    private readonly Dictionary<int, string> _opacities = new();       // percent -> graphics state name
+
     public PdfDocument(string title) { Title = title; }
 
     public string Title { get; }
@@ -63,6 +66,32 @@ internal sealed class PdfDocument
         }
         return image.ResourceName;
     }
+
+    /// <summary>
+    /// Registers a two-colour gradient (once per colour pair and direction) and returns the name pages paint it by.
+    /// The gradient is defined on the unit square, so one definition serves every box: <see cref="PdfPage.FillGradient"/> moves and scales it.
+    /// </summary>
+    public string Shading(Color from, Color to, bool horizontal)
+    {
+        var key = $"{from.R:x2}{from.G:x2}{from.B:x2}-{to.R:x2}{to.G:x2}{to.B:x2}-{(horizontal ? 'h' : 'v')}";
+        if (!_shadings.TryGetValue(key, out var shading))
+            _shadings[key] = shading = ("Sh" + (_shadings.Count + 1), from, to, horizontal);
+        return shading.Name;
+    }
+
+    /// <summary>
+    /// Registers a see-through setting (once per whole percent) and returns the name <see cref="PdfPage.SetOpacity"/> switches it on by.
+    /// 1 = solid, 0 = invisible; a value outside that range is cut to it.
+    /// </summary>
+    public string Opacity(double opacity)
+    {
+        int percent = double.IsNaN(opacity) ? 0 : (int)Math.Round(Math.Clamp(opacity, 0, 1) * 100);
+        if (!_opacities.TryGetValue(percent, out var name))
+            _opacities[percent] = name = "Gs" + (_opacities.Count + 1);
+        return name;
+    }
+
+    private static PdfArray Rgb(Color color) => PdfArray.Numbers(color.R / 255.0, color.G / 255.0, color.B / 255.0);
 
     /// <summary>Writes the bookmark tree (outline) and returns the number of its root object, or 0 when there is none.</summary>
     private int WriteOutline(PdfFile file, List<int> pageRefs)
@@ -139,9 +168,31 @@ internal sealed class PdfDocument
         var images = new PdfDict();
         foreach (var image in _images.Values) images.Put(image.ResourceName, new PdfRef(image.WriteTo(file)));
 
+        // Axial shading on the unit square: along x for left-to-right, along y (which runs downward on the page) for top-to-bottom.
+        var shadings = new PdfDict();
+        foreach (var shading in _shadings.Values)
+        {
+            var function = new PdfDict()
+                .Put("FunctionType", 2).Put("Domain", PdfArray.Numbers(0, 1))
+                .Put("C0", Rgb(shading.From)).Put("C1", Rgb(shading.To)).Put("N", 1);
+            var dict = new PdfDict()
+                .Put("ShadingType", 2).PutName("ColorSpace", "DeviceRGB")
+                .Put("Coords", shading.Horizontal ? PdfArray.Numbers(0, 0, 1, 0) : PdfArray.Numbers(0, 0, 0, 1))
+                .Put("Function", function)
+                .Put("Extend", new PdfArray(new PdfValue[] { new PdfBool(true), new PdfBool(true) }));
+            shadings.Put(shading.Name, new PdfRef(file.Add(dict)));
+        }
+
         var resources = new PdfDict();
         if (_fonts.Count > 0) resources.Put("Font", fonts);
         if (_images.Count > 0) resources.Put("XObject", images);
+        if (_shadings.Count > 0) resources.Put("Shading", shadings);
+
+        // Graphics states that make what follows see-through: ca for fills (text), CA for strokes.
+        var states = new PdfDict();
+        foreach (var (percent, name) in _opacities)
+            states.Put(name, new PdfDict().Put("ca", percent / 100.0).Put("CA", percent / 100.0));
+        if (_opacities.Count > 0) resources.Put("ExtGState", states);
         var resourcesRef = file.Add(resources);
 
         var pageRefs = _pages.Select(_ => file.Reserve()).ToList();   // links may point to a later page
@@ -289,6 +340,21 @@ internal sealed class PdfPage
         _content.Append(Rgb(color)).Append(" rg\n").Append(ShapePath(x, y, width, height, rx, ry)).Append("f\n");
     }
 
+    /// <summary>
+    /// Paints a gradient (from <see cref="PdfDocument.Shading"/>) inside a box with rounded corners (<paramref name="rx"/>, <paramref name="ry"/>),
+    /// an ellipse (half the width and height) or, with 0, a plain rectangle: the shape clips, the shading is moved and scaled to the box.
+    /// </summary>
+    public void FillGradient(string shading, double x, double y, double width, double height, double rx, double ry)
+    {
+        if (width <= 0 || height <= 0) return;
+        _content.Append("q\n");
+        if (rx > 0 || ry > 0) _content.Append(ShapePath(x, y, width, height, rx, ry));
+        else _content.Append(N(x)).Append(' ').Append(N(y)).Append(' ').Append(N(width)).Append(' ').Append(N(height)).Append(" re\n");
+        _content.Append("W n\n")
+            .Append(N(width)).Append(" 0 0 ").Append(N(height)).Append(' ').Append(N(x)).Append(' ').Append(N(y)).Append(" cm\n/")
+            .Append(shading).Append(" sh\nQ\n");
+    }
+
     /// <summary>The outline is centred on the edge, like a GDI+ pen.</summary>
     public void StrokeShape(double x, double y, double width, double height, double rx, double ry, Color color, double lineWidth)
     {
@@ -338,6 +404,27 @@ internal sealed class PdfPage
         _content.Append("q\n").Append(N(x)).Append(' ').Append(N(y)).Append(' ').Append(N(width)).Append(' ').Append(N(height)).Append(" re W n\n");
 
     public void PopClip() => _content.Append("Q\n");
+
+    /// <summary>
+    /// Everything drawn until <see cref="PopRotation"/> is turned counter-clockwise (as seen on the page) by
+    /// <paramref name="angleDegrees"/> about the point (<paramref name="centerX"/>, <paramref name="centerY"/>): that point becomes the origin,
+    /// x runs along the turned baseline and y runs down the turned page, like everywhere else.
+    /// </summary>
+    public void PushRotation(double centerX, double centerY, double angleDegrees)
+    {
+        double radians = angleDegrees * Math.PI / 180;
+        double cos = TidyZero(Math.Cos(radians)), sin = TidyZero(Math.Sin(radians));
+        _content.Append("q\n").Append(N(cos)).Append(' ').Append(N(TidyZero(-sin))).Append(' ').Append(N(sin)).Append(' ')
+            .Append(N(cos)).Append(' ').Append(N(centerX)).Append(' ').Append(N(centerY)).Append(" cm\n");
+    }
+
+    public void PopRotation() => _content.Append("Q\n");
+
+    /// <summary>Makes what follows see-through, using a name from <see cref="PdfDocument.Opacity"/>. Put it inside q/Q so it ends with them.</summary>
+    public void SetOpacity(string name) => _content.Append('/').Append(name).Append(" gs\n");
+
+    // Sine and cosine of a quarter turn come out as 6e-17; write a clean 0 (and never "-0").
+    private static double TidyZero(double value) => Math.Abs(value) < 1e-9 ? 0 : value;
 
     public void Image(string resourceName, double x, double y, double width, double height) =>
         // A picture fills the unit square with y up; the matrix scales it and turns it over for the y-down page.

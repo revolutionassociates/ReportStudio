@@ -31,6 +31,9 @@ public class RenderedItem
     public double BorderWidth { get; set; }
     /// <summary>Corner rounding of a box, in pixels (0 = square). See <see cref="ShapeGeometry.CornerRadius"/> for the usable value.</summary>
     public double CornerRadius { get; set; }
+    /// <summary>Second colour of a gradient fill, or "" for a solid fill. See <see cref="ShapeGeometry.UsesGradient"/>.</summary>
+    public string GradientColor { get; set; } = "";
+    public GradientDirection GradientDirection { get; set; }
     /// <summary>Cleaned hyperlink address (http, https, mailto, tel, or #Bookmark), or "" for none. See <see cref="LinkTarget"/>.</summary>
     public string Link { get; set; } = "";
     /// <summary>Name of the bookmark placed at this item, or "".</summary>
@@ -60,6 +63,32 @@ public class RenderedPage
     public double Width { get; set; }
     public double Height { get; set; }
     public List<RenderedItem> Items { get; } = new();
+    /// <summary>Faint text drawn behind this page's items, already resolved (expressions filled in). Null = none.</summary>
+    public RenderedWatermark? Watermark { get; set; }
+    /// <summary>The colour behind the whole page, drawn before everything else. Null = the plain page.</summary>
+    public RenderedBackground? Background { get; set; }
+}
+
+/// <summary>What is painted behind a whole page: a colour, or a gradient from it to <see cref="GradientColor"/>.</summary>
+public class RenderedBackground
+{
+    public string Color { get; set; } = "";
+    /// <summary>Empty = a single colour.</summary>
+    public string GradientColor { get; set; } = "";
+    public GradientDirection GradientDirection { get; set; }
+}
+
+/// <summary>The watermark of one page, ready to draw: see <see cref="WatermarkLayout"/> for where it goes.</summary>
+public class RenderedWatermark
+{
+    public string Text { get; set; } = "";
+    public string Color { get; set; } = "#9CA3AF";
+    public double Opacity { get; set; } = 0.3;
+    /// <summary>Degrees, counter-clockwise.</summary>
+    public double Angle { get; set; } = 45;
+    /// <summary>Points.</summary>
+    public double FontSize { get; set; } = 72;
+    public bool Bold { get; set; } = true;
 }
 
 public class ReportResult

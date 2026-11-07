@@ -26,6 +26,8 @@ public static class PdfExporter
         foreach (var page in report.Pages)
         {
             var p = doc.AddPage(page.Width, page.Height);
+            DrawBackground(doc, p, page);       // first of all
+            DrawWatermark(doc, p, page);        // then the watermark, so it lies behind the items
             foreach (var item in page.Items)
             {
                 DrawItem(doc, p, item);
@@ -35,6 +37,41 @@ public static class PdfExporter
         }
         foreach (var entry in report.FindOutline()) doc.Outline(entry.Title, entry.Level, entry.PageIndex, entry.Y);
         doc.Save(stream, options);
+    }
+
+    /// <summary>The colour or gradient behind the whole page. A colour that cannot be read leaves the page plain.</summary>
+    private static void DrawBackground(PdfDocument doc, PdfPage g, RenderedPage page)
+    {
+        var bg = page.Background;
+        if (bg == null || page.Width <= 0 || page.Height <= 0 || ColorUtil.Parse(bg.Color) is not { } color) return;
+
+        if (!string.IsNullOrWhiteSpace(bg.GradientColor) && ColorUtil.Parse(bg.GradientColor) is { } second)
+            g.FillGradient(doc.Shading(color, second, bg.GradientDirection == GradientDirection.LeftToRight), 0, 0, page.Width, page.Height, 0, 0);
+        else
+            g.FillRectangle(0, 0, page.Width, page.Height, color);
+    }
+
+    /// <summary>Faint text turned about the page centre; a text too long for the page is made smaller until it fits.</summary>
+    private static void DrawWatermark(PdfDocument doc, PdfPage g, RenderedPage page)
+    {
+        var wm = page.Watermark;
+        if (wm == null || string.IsNullOrWhiteSpace(wm.Text) || page.Width <= 0 || page.Height <= 0) return;
+        if (WatermarkLayout.Alpha(wm.Opacity) == 0) return;
+
+        var text = Clean(wm.Text.Replace('\r', ' ').Replace('\n', ' '));
+        if (text.Length == 0) return;
+        var face = PdfFontProvider.Resolve(ReportItem.DefaultFontFamily, wm.Bold, false);
+        var font = doc.Font(face);
+        double size = wm.FontSize * 96.0 / 72.0;                // points -> report pixels
+        size = WatermarkLayout.FitFontSize(size, face.Width(text, size), page.Width, page.Height, wm.Angle);
+        double width = face.Width(text, size);
+        var color = ColorUtil.Parse(wm.Color) ?? Color.Gray;
+
+        g.PushRotation(page.Width / 2, page.Height / 2, wm.Angle);
+        g.SetOpacity(doc.Opacity(wm.Opacity));
+        // In the turned frame the line is centred on the origin: half its width back, and its box centred on the baseline.
+        g.Text(font, size, -width / 2, face.BaselineOffset(size) - face.LineHeight(size) / 2, text, color);
+        g.PopRotation();
     }
 
     /// <summary>Makes the item's box clickable: a web address, mail or phone link, or a jump to a bookmark.</summary>
@@ -63,12 +100,12 @@ public static class PdfExporter
                 double ry = ellipse ? it.Height / 2 : rx;
                 if (ellipse || rx > 0)
                 {
-                    if (back != null) g.FillShape(it.X, it.Y, it.Width, it.Height, rx, ry, back.Value);
+                    if (back != null) FillBack(doc, g, it, back.Value, rx, ry);
                     if (it.BorderWidth > 0)
                         g.StrokeShape(it.X, it.Y, it.Width, it.Height, rx, ry, border ?? ink, it.BorderWidth);
                     return;
                 }
-                if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
+                if (back != null) FillBack(doc, g, it, back.Value);
                 if (it.BorderWidth > 0)
                     g.StrokeRectangle(it.X, it.Y, it.Width, it.Height, border ?? ink, it.BorderWidth);
                 return;
@@ -102,13 +139,25 @@ public static class PdfExporter
                 break;
             }
             case ItemKind.Text:
-                if (back != null) g.FillRectangle(it.X, it.Y, it.Width, it.Height, back.Value);
+                if (back != null) FillBack(doc, g, it, back.Value);
                 DrawText(doc, g, it);
                 break;
         }
 
         if (border != null && it.BorderWidth > 0)
             g.StrokeRectangle(it.X, it.Y, it.Width, it.Height, border.Value, it.BorderWidth);
+    }
+
+    /// <summary>The fill of a box, ellipse or text box: a gradient when the item has one, otherwise the plain back colour.</summary>
+    private static void FillBack(PdfDocument doc, PdfPage g, RenderedItem it, Color back, double rx = 0, double ry = 0)
+    {
+        if (ShapeGeometry.UsesGradient(it) && ColorUtil.Parse(it.GradientColor) is { } second)
+        {
+            var name = doc.Shading(back, second, it.GradientDirection == GradientDirection.LeftToRight);
+            g.FillGradient(name, it.X, it.Y, it.Width, it.Height, rx, ry);
+        }
+        else if (rx > 0 || ry > 0) g.FillShape(it.X, it.Y, it.Width, it.Height, rx, ry, back);
+        else g.FillRectangle(it.X, it.Y, it.Width, it.Height, back);
     }
 
     /// <summary>The picture, as large as fits the box with its proportions kept, centred.</summary>
