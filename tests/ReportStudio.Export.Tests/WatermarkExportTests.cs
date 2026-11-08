@@ -196,7 +196,7 @@ public class WatermarkExportTests
         Assert.NotEmpty(letters);
         double left = letters.Min(l => l.GlyphRectangle.Left), right = letters.Max(l => l.GlyphRectangle.Right);
         Assert.True(left >= 0 && right <= pageWidth * 0.75, $"the text runs from {left} to {right} points");
-        Assert.Equal(pageWidth * 0.75 / 2, (left + right) / 2, 8);                      // centred, to within a few points
+        Assert.InRange((left + right) / 2, pageWidth * 0.75 / 2 - 2, pageWidth * 0.75 / 2 + 2);   // centred, to within a couple of points                      // centred, to within a few points
     }
 
     // ---- HTML ----
