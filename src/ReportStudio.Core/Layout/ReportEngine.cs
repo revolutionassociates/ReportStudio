@@ -3,6 +3,7 @@ using ReportStudio.Core.Barcodes;
 using ReportStudio.Core.Data;
 using ReportStudio.Core.Expressions;
 using ReportStudio.Core.Model;
+using ReportStudio.Core.Text;
 
 namespace ReportStudio.Core.Layout;
 
@@ -688,7 +689,8 @@ public static class ReportEngine
 
                 if (item.Kind == ItemKind.Text)
                 {
-                    r.Text = SafeText(item.Text, item.Format, ctx);
+                    if (item.RichText) ApplyRichText(item, r, ctx);
+                    else r.Text = SafeText(item.Text, item.Format, ctx);
                     if (item.CanGrow && r.Text.Length > 0 && !TextTurn.IsTurned(item.TextRotation))
                         r.Height = Math.Max(item.Height, _opt.Measurer.MeasureHeight(r.Text, item, item.Width));
                 }
@@ -1204,6 +1206,25 @@ public static class ReportEngine
                 HAlign = HAlign.Center, VAlign = VAlign.Middle, WordWrap = false,
                 ForeColor = item.ForeColor
             });
+        }
+
+        /// <summary>
+        /// Rich text: the {expressions} are evaluated with their values made safe (never read as markup), then the markup is read into runs.
+        /// <see cref="RenderedItem.Text"/> gets the plain text; <see cref="RenderedItem.Runs"/> is set only when some run looks different.
+        /// </summary>
+        private void ApplyRichText(ReportItem item, RenderedItem r, EvalContext ctx)
+        {
+            string markup;
+            try { markup = TextTemplate.Parse(item.Text).EvaluateString(ctx, item.Format, RichText.Escape); }
+            catch (ExpressionException ex)
+            {
+                Warn($"'{item.Text}': {ex.Message}");
+                r.Text = "#ERR";
+                return;
+            }
+            var runs = RichText.Parse(markup);
+            r.Text = RichText.Plain(runs);
+            if (RichText.IsStyled(runs)) r.Runs = runs;
         }
 
         private string SafeText(string text, string format, EvalContext ctx)

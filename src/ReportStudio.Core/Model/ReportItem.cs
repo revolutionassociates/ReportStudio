@@ -54,6 +54,12 @@ public class ReportItem
      Description("Format applied to {expression} values: e.g. N2, C, #,##0.00, dd-MMM-yyyy.")]
     public string Format { get; set; } = "";
 
+    [Category("Content"), Description("Lets the text use simple markup: <b>bold</b>, <i>italic</i>, <u>underline</u>, <s>strike</s>, <br> for a new line, " +
+                                      "<font color=\"#C00000\">coloured</font>, and <span style=\"color:#C00000; font-weight:bold\">. " +
+                                      "Anything else is shown without its tags. Values from {expressions} are never read as markup. " +
+                                      "Excel, Word and CSV get the plain text.")]
+    public bool RichText { get; set; }
+
     [Category("Content"), Description("When true the element grows downward to fit wrapped text.")]
     public bool CanGrow { get; set; }
 

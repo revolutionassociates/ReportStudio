@@ -564,11 +564,21 @@ public sealed class TextTemplate
     public object? EvaluateValue(EvalContext ctx) =>
         _parts.Count == 1 && _parts[0].IsExpr ? Expr.Evaluate(_parts[0].Text, ctx) : EvaluateString(ctx, null);
 
-    public string EvaluateString(EvalContext ctx, string? format)
+    public string EvaluateString(EvalContext ctx, string? format) => EvaluateString(ctx, format, null);
+
+    /// <summary>
+    /// Like <see cref="EvaluateString(EvalContext, string?)"/>, with each {expression} value passed through <paramref name="encode"/>
+    /// before it is joined to the literal text (rich text uses this so a value is never read as markup). Null = no change.
+    /// </summary>
+    public string EvaluateString(EvalContext ctx, string? format, Func<string, string>? encode)
     {
         var sb = new StringBuilder();
         foreach (var (isExpr, text) in _parts)
-            sb.Append(isExpr ? Expr.Format(Expr.Evaluate(text, ctx), format, ctx.Culture) : text);
+        {
+            if (!isExpr) { sb.Append(text); continue; }
+            var value = Expr.Format(Expr.Evaluate(text, ctx), format, ctx.Culture);
+            sb.Append(encode == null ? value : encode(value));
+        }
         return sb.ToString();
     }
 }

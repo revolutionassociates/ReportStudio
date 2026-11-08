@@ -232,7 +232,34 @@ public static class HtmlExporter
         style.Append(";text-align:").Append(it.HAlign switch { HAlign.Center => "center", HAlign.Right => "right", _ => "left" });
 
         html.Append("<div class=\"t ").Append(it.WordWrap ? "w" : "nw").Append("\" style=\"").Append(style).Append("\"><div>")
-            .Append(WebUtility.HtmlEncode(it.Text ?? "")).Append("</div></div>\n");
+            .Append(TextHtml(it)).Append("</div></div>\n");
+    }
+
+    /// <summary>
+    /// The text of an element as HTML. Rich text becomes spans that carry only the look of each run (weight, style, decoration, colour);
+    /// the text itself is always encoded, so nothing in a report or a data value can add a tag.
+    /// </summary>
+    private static string TextHtml(RenderedItem it)
+    {
+        if (it.Runs == null || it.Runs.Count == 0) return WebUtility.HtmlEncode(it.Text ?? "");
+
+        var sb = new StringBuilder();
+        foreach (var run in it.Runs)
+        {
+            var look = new StringBuilder();
+            if (run.Bold) look.Append("font-weight:700;");
+            if (run.Italic) look.Append("font-style:italic;");
+            if (run.Underline || run.Strike)
+                look.Append("text-decoration:").Append(run.Underline ? "underline" : "")
+                    .Append(run.Underline && run.Strike ? " " : "").Append(run.Strike ? "line-through" : "").Append(';');
+            var color = run.Color.Length > 0 ? Css(run.Color) : null;
+            if (color != null) look.Append("color:").Append(color).Append(';');
+
+            var text = WebUtility.HtmlEncode(run.Text);
+            if (look.Length == 0) sb.Append(text);
+            else sb.Append("<span style=\"").Append(look).Append("\">").Append(text).Append("</span>");
+        }
+        return sb.ToString();
     }
 
     private static void AppendImage(StringBuilder html, RenderedItem it, string box, string backCss, string borderCss)

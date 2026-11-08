@@ -11,6 +11,11 @@ public class RenderedItem
     public double Width { get; set; }
     public double Height { get; set; }
     public string Text { get; set; } = "";
+    /// <summary>
+    /// Rich text: the text split into runs that differ in look (bold, italic, underline, strike, colour). Null for plain text, and when no run differs.
+    /// <see cref="Text"/> always holds the same text without markup, so outputs that cannot show runs use it.
+    /// </summary>
+    public List<ReportStudio.Core.Text.TextRun>? Runs { get; set; }
     /// <summary>For Barcode items: the symbology; <see cref="Text"/> holds the value (empty when it cannot be encoded).</summary>
     public ReportStudio.Core.Barcodes.BarcodeType BarcodeType { get; set; }
     /// <summary>For QrCode items: the error-correction level; <see cref="Text"/> holds the value (empty when it cannot be encoded).</summary>
