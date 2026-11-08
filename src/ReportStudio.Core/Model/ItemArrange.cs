@@ -106,6 +106,7 @@ public static class ItemArrange
         to.BorderColor = from.BorderColor;
         to.BorderWidth = from.BorderWidth;
         to.CornerRadius = from.CornerRadius;
+        to.TextRotation = from.TextRotation;
         to.GradientColor = from.GradientColor;
         to.GradientDirection = from.GradientDirection;
         to.Format = from.Format;

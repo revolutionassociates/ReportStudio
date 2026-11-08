@@ -31,6 +31,8 @@ public class RenderedItem
     public double BorderWidth { get; set; }
     /// <summary>Corner rounding of a box, in pixels (0 = square). See <see cref="ShapeGeometry.CornerRadius"/> for the usable value.</summary>
     public double CornerRadius { get; set; }
+    /// <summary>Degrees the text is turned counter-clockwise about the middle of the box (0 = upright). See <see cref="TextRotation"/>.</summary>
+    public double TextRotation { get; set; }
     /// <summary>Second colour of a gradient fill, or "" for a solid fill. See <see cref="ShapeGeometry.UsesGradient"/>.</summary>
     public string GradientColor { get; set; } = "";
     public GradientDirection GradientDirection { get; set; }
