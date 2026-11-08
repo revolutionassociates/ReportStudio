@@ -227,7 +227,7 @@ public class BackgroundExportTests
     }
 
     [Fact]
-    public void An_unreadable_gradient_colour_gives_the_single_colour()
+    public void The_preview_gives_the_single_colour_when_the_gradient_colour_is_unreadable()
     {
         using var bmp = Draw(Back("#FF0000", "not-a-colour"));
 
