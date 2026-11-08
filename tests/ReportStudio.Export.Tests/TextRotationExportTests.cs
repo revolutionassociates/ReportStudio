@@ -14,8 +14,16 @@ public class TextRotationExportTests
 {
     private static RenderedItem Item(double rotation, string back = "", string border = "", double width = 100, double height = 30) => new()
     {
-        Kind = ItemKind.Text, X = 10, Y = 10, Width = width, Height = height, Text = "Hi", TextRotation = rotation,
-        BackColor = back, BorderColor = border, BorderWidth = border.Length > 0 ? 1 : 0
+        Kind = ItemKind.Text,
+        X = 10,
+        Y = 10,
+        Width = width,
+        Height = height,
+        Text = "Hi",
+        TextRotation = rotation,
+        BackColor = back,
+        BorderColor = border,
+        BorderWidth = border.Length > 0 ? 1 : 0
     };
 
     private static ReportResult Result(RenderedItem item)
@@ -97,7 +105,7 @@ public class TextRotationExportTests
         var html = HtmlExporter.Build(Result(Item(90, back: "#FFFF00", border: "#FF0000")));
 
         Assert.Contains("left:10px;top:10px;width:100px;height:30px;background:#ffff00", html);
-        Assert.Equal(1, Regex.Matches(html, "transform:rotate").Count);
+        Assert.Single(Regex.Matches(html, "transform:rotate"));
     }
 
     [Fact]
@@ -112,8 +120,17 @@ public class TextRotationExportTests
     {
         var item = new RenderedItem
         {
-            Kind = ItemKind.Text, X = 0, Y = 0, Width = 100, Height = 20, Text = "MM", FontSize = 12,
-            HAlign = HAlign.Left, VAlign = VAlign.Middle, WordWrap = false, TextRotation = rotation
+            Kind = ItemKind.Text,
+            X = 0,
+            Y = 0,
+            Width = 100,
+            Height = 20,
+            Text = "MM",
+            FontSize = 12,
+            HAlign = HAlign.Left,
+            VAlign = VAlign.Middle,
+            WordWrap = false,
+            TextRotation = rotation
         };
         var page = new RenderedPage { Number = 1, Width = 100, Height = 20 };
         page.Items.Add(item);
