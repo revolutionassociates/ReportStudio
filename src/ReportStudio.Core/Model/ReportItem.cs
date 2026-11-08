@@ -135,6 +135,11 @@ public class ReportItem
     [Category("Appearance"), Description("Rounds the corners of a box (Kind = Rectangle), in pixels. 0 = square corners. A value larger than half the shorter side makes the ends fully round.")]
     public double CornerRadius { get; set; }
 
+    [Category("Appearance"), Description("Turns the text (not the box, its fill or its border) counter-clockwise by this many degrees about the middle of the box: " +
+                                          "90 reads from bottom to top, 270 from top to bottom, 180 is upside down. Near a quarter turn the text wraps along the box's height, " +
+                                          "so make the box tall and narrow for a vertical column heading. A turned text does not grow with Can grow. 0 = upright.")]
+    public double TextRotation { get; set; }
+
     // ---- Barcode (Kind = Barcode; the value to encode is Text, e.g. "{EmpCode}") ----
     [Category("Barcode")] public ReportStudio.Core.Barcodes.BarcodeType BarcodeType { get; set; }
 
@@ -193,7 +198,9 @@ public class ReportItem
     [Browsable(false)]
     public string ImageBase64 { get; set; } = "";
 
-    [Category("Image"), Description("Optional local file path, or a {expression} that yields one, loaded at run time.")]
+    [Category("Image"), Description("Where the picture comes from at run time: a local file path (or a text with {expressions} that gives one), " +
+                                    "or a single {Field} that holds the picture itself: a database image column, base64 text, or a data:image/png;base64,... address. " +
+                                    "An empty field prints no picture. PNG, JPEG, GIF, BMP, TIFF, and plain SVG drawings (no scripts or links to other files or web addresses).")]
     public string ImagePath { get; set; } = "";
 
     [JsonIgnore, Browsable(false)] public double Right => X + Width;

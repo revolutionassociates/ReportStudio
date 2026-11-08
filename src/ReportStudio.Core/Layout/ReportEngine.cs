@@ -662,6 +662,7 @@ public static class ReportEngine
                     ForeColor = item.ForeColor, BackColor = item.BackColor,
                     BorderColor = item.BorderColor, BorderWidth = item.BorderWidth,
                     CornerRadius = item.CornerRadius,
+                    TextRotation = item.TextRotation,
                     GradientColor = item.GradientColor, GradientDirection = item.GradientDirection
                 };
                 ApplyRules(item, r, ctx);
@@ -670,7 +671,7 @@ public static class ReportEngine
                 if (item.Kind == ItemKind.Text)
                 {
                     r.Text = SafeText(item.Text, item.Format, ctx);
-                    if (item.CanGrow && r.Text.Length > 0)
+                    if (item.CanGrow && r.Text.Length > 0 && !TextTurn.IsTurned(item.TextRotation))
                         r.Height = Math.Max(item.Height, _opt.Measurer.MeasureHeight(r.Text, item, item.Width));
                 }
                 else if (item.Kind == ItemKind.Image)
@@ -1204,9 +1205,34 @@ public static class ReportEngine
                 if (!string.IsNullOrWhiteSpace(item.ImageBase64)) return Convert.FromBase64String(item.ImageBase64);
                 if (string.IsNullOrWhiteSpace(item.ImagePath)) return null;
 
-                var path = TextTemplate.Parse(item.ImagePath).EvaluateString(ctx, null);
+                // A single {Field} may hold the picture itself: bytes from a database column, or base64 / data: text.
+                string? path;
+                var single = ImageData.SingleExpression(item.ImagePath);
+                if (single != null)
+                {
+                    var value = Expr.Normalize(Expr.Evaluate(single, ctx));
+                    if (value == null || (value is string blank && string.IsNullOrWhiteSpace(blank))) return null;   // no picture for this row
+                    var picture = ImageData.FromValue(value);
+                    if (picture != null) return picture;
+                    if (value is byte[]) { Warn($"Image '{item.Name}': the field does not hold a picture (PNG, JPEG, GIF, BMP, TIFF or a plain SVG drawing without scripts or links)."); return null; }
+                    path = Expr.Format(value, null, _opt.Culture);
+                }
+                else path = TextTemplate.Parse(item.ImagePath).EvaluateString(ctx, null);
+
+                if (string.IsNullOrWhiteSpace(path)) return null;
+                var inline = ImageData.FromText(path);
+                if (inline != null) return inline;
                 if (!Path.IsPathRooted(path) && _opt.BaseDirectory != null) path = Path.Combine(_opt.BaseDirectory, path);
-                if (File.Exists(path)) return File.ReadAllBytes(path);
+                if (File.Exists(path))
+                {
+                    var file = File.ReadAllBytes(path);
+                    if (ImageData.LooksLikeSvg(file) && !ImageData.IsSafeSvg(file))
+                    {
+                        Warn($"Image '{item.Name}': the SVG drawing was left out because it contains scripts or links to other files or web addresses.");
+                        return null;
+                    }
+                    return file;
+                }
                 Warn($"Image not found: {path}");
             }
             catch (Exception ex) when (ex is FormatException or IOException or ExpressionException or UnauthorizedAccessException)

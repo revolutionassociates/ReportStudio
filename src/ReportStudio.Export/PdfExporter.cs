@@ -166,11 +166,13 @@ public static class PdfExporter
         if (it.Image == null || it.Image.Length == 0) return;
         try
         {
-            using var bitmap = new Bitmap(new MemoryStream(it.Image));
+            var picture = SvgRaster.Resolve(it.Image, it.Width, it.Height, 2);          // an SVG drawing becomes a PNG at twice the box size
+            if (picture.Length == 0) return;
+            using var bitmap = new Bitmap(new MemoryStream(picture));
             double ratio = Math.Min(it.Width / bitmap.Width, it.Height / bitmap.Height);
             double w = bitmap.Width * ratio, h = bitmap.Height * ratio;
 
-            var key = Convert.ToHexString(SHA256.HashData(it.Image));
+            var key = Convert.ToHexString(SHA256.HashData(picture));
             var name = doc.Image(key, () => new Bitmap(bitmap));
             g.Image(name, it.X + (it.Width - w) / 2, it.Y + (it.Height - h) / 2, w, h);
         }
@@ -183,6 +185,29 @@ public static class PdfExporter
     private static void DrawText(PdfDocument doc, PdfPage g, RenderedItem it)
     {
         if (string.IsNullOrEmpty(it.Text)) return;
+        if (!TextTurn.IsTurned(it.TextRotation)) { DrawUprightText(doc, g, it); return; }
+
+        // Turned text: PushRotation moves the origin to the middle of the box and turns the axes, so the text is laid out
+        // upright in a box centred on that origin (width and height swapped near a quarter turn).
+        // The fill and border were drawn before, unturned.
+        double cx = it.X + it.Width / 2, cy = it.Y + it.Height / 2;
+        var (lw, lh) = TextTurn.LayoutSize(it.TextRotation, it.Width, it.Height);
+        double x = it.X, y = it.Y, w = it.Width, h = it.Height;
+        g.PushRotation(cx, cy, TextTurn.Normalize(it.TextRotation));
+        try
+        {
+            it.X = -lw / 2; it.Y = -lh / 2; it.Width = lw; it.Height = lh;
+            DrawUprightText(doc, g, it);
+        }
+        finally
+        {
+            it.X = x; it.Y = y; it.Width = w; it.Height = h;
+            g.PopRotation();
+        }
+    }
+
+    private static void DrawUprightText(PdfDocument doc, PdfPage g, RenderedItem it)
+    {
         var rect = new RectangleF((float)it.X, (float)it.Y, (float)it.Width, (float)it.Height);
         if (PdfComplexText.TryDraw(g, it, rect)) return;   // Hindi, Tamil, ...: shaped by GDI+, see PdfComplexText
 

@@ -183,7 +183,20 @@ public static class HtmlExporter
     {
         if (string.IsNullOrEmpty(it.Text) && backCss.Length == 0 && borderCss.Length == 0) return;
 
-        var style = new StringBuilder(box).Append(backCss).Append(borderCss);
+        bool turned = TextTurn.IsTurned(it.TextRotation) && !string.IsNullOrEmpty(it.Text);
+        if (turned && (backCss.Length > 0 || borderCss.Length > 0))
+            html.Append("<div style=\"").Append(box).Append(backCss).Append(borderCss).Append("\"></div>\n");   // the fill and border stay upright
+
+        var style = new StringBuilder();
+        if (turned)
+        {
+            // The text sits in its own box with the same middle (width and height swapped near a quarter turn), turned about it.
+            var (lw, lh) = TextTurn.LayoutSize(it.TextRotation, it.Width, it.Height);
+            double cx = it.X + it.Width / 2, cy = it.Y + it.Height / 2;
+            style.Append("left:").Append(Px(cx - lw / 2)).Append("px;top:").Append(Px(cy - lh / 2)).Append("px;width:").Append(Px(lw))
+                .Append("px;height:").Append(Px(lh)).Append("px;transform:rotate(").Append(Px(-TextTurn.Normalize(it.TextRotation))).Append("deg)");
+        }
+        else style.Append(box).Append(backCss).Append(borderCss);
         style.Append(";font-family:").Append(FontStack(it.FontFamily));
         style.Append(";font-size:").Append(Px(it.FontSize * 96.0 / 72.0)).Append("px");
         if (it.Bold) style.Append(";font-weight:700");
@@ -199,7 +212,9 @@ public static class HtmlExporter
 
     private static void AppendImage(StringBuilder html, RenderedItem it, string box, string backCss, string borderCss)
     {
-        if (it.Image == null || it.Image.Length == 0)
+        // An SVG is embedded as it is (a picture in an img tag never runs scripts); an unsafe one is left out like an unreadable picture.
+        bool svg = it.Image != null && ImageData.LooksLikeSvg(it.Image);
+        if (it.Image == null || it.Image.Length == 0 || (svg && !ImageData.IsSafeSvg(it.Image)))
         {
             if (backCss.Length > 0 || borderCss.Length > 0) html.Append($"<div style=\"{box}{backCss}{borderCss}\"></div>\n");
             return;
@@ -260,6 +275,7 @@ public static class HtmlExporter
 
     private static string Mime(byte[] data)
     {
+        if (ImageData.LooksLikeSvg(data)) return "image/svg+xml";
         if (data.Length > 3 && data[0] == 0xFF && data[1] == 0xD8) return "image/jpeg";
         if (data.Length > 3 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46) return "image/gif";
         if (data.Length > 2 && data[0] == 0x42 && data[1] == 0x4D) return "image/bmp";

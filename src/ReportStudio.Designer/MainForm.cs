@@ -427,11 +427,18 @@ internal sealed class MainForm : Form
 
     private void PickImage(ReportItem item)
     {
-        using var dlg = new OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*" };
+        using var dlg = new OpenFileDialog { Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.svg|All files|*.*" };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         try
         {
-            item.ImageBase64 = Convert.ToBase64String(File.ReadAllBytes(dlg.FileName));
+            var bytes = File.ReadAllBytes(dlg.FileName);
+            if (ReportStudio.Core.Layout.ImageData.LooksLikeSvg(bytes) && !ReportStudio.Core.Layout.ImageData.IsSafeSvg(bytes))
+            {
+                MessageBox.Show(this, "This SVG drawing contains scripts or links to other files or web addresses, so it cannot be used. " +
+                    "Export a plain drawing (no scripts, no external links) and try again.", "Load image", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            item.ImageBase64 = Convert.ToBase64String(bytes);
             _canvas.NotifyChanged();
         }
         catch (IOException ex)

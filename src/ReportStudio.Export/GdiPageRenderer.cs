@@ -135,7 +135,17 @@ public static class GdiPageRenderer
                 break;
             case ItemKind.Text:
                 if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillRectangle(b, rect); }
-                DrawText(g, item, rect);
+                if (TextTurn.IsTurned(item.TextRotation) && !string.IsNullOrEmpty(item.Text))
+                {
+                    // Turn the text about the middle of the box; the fill and border stay where they are.
+                    var (lw, lh) = TextTurn.LayoutSize(item.TextRotation, rect.Width, rect.Height);
+                    var state = g.Save();
+                    g.TranslateTransform(rect.X + rect.Width / 2f, rect.Y + rect.Height / 2f);
+                    g.RotateTransform((float)-TextTurn.Normalize(item.TextRotation));
+                    DrawText(g, item, new RectangleF((float)(-lw / 2), (float)(-lh / 2), (float)lw, (float)lh));
+                    g.Restore(state);
+                }
+                else DrawText(g, item, rect);
                 break;
         }
 
@@ -210,7 +220,9 @@ public static class GdiPageRenderer
         if (item.Image == null || item.Image.Length == 0) return;
         try
         {
-            using var ms = new MemoryStream(item.Image);
+            var picture = SvgRaster.Resolve(item.Image, rect.Width, rect.Height, 1);     // an SVG drawing becomes a PNG
+            if (picture.Length == 0) return;
+            using var ms = new MemoryStream(picture);
             using var img = Image.FromStream(ms);
             // Fit inside the box, keep aspect ratio, centre.
             float ratio = Math.Min(rect.Width / img.Width, rect.Height / img.Height);
