@@ -91,6 +91,10 @@ public class RenderedWatermark
     /// <summary>Points.</summary>
     public double FontSize { get; set; } = 72;
     public bool Bold { get; set; } = true;
+    /// <summary>The picture (a checked picture or safe SVG), or null for a text-only watermark. See <see cref="WatermarkLayout.PictureSize"/>.</summary>
+    public byte[]? Image { get; set; }
+    /// <summary>Percent of the page width the picture may use.</summary>
+    public double ImageSize { get; set; } = 50;
 }
 
 public class ReportResult

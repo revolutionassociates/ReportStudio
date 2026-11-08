@@ -89,8 +89,11 @@ public static class HtmlExporter
     private static void AppendWatermark(StringBuilder html, RenderedPage page)
     {
         var wm = page.Watermark;
-        if (wm == null || string.IsNullOrWhiteSpace(wm.Text) || page.Width <= 0 || page.Height <= 0) return;
+        if (wm == null || page.Width <= 0 || page.Height <= 0) return;
         if (WatermarkLayout.Alpha(wm.Opacity) == 0) return;
+
+        AppendWatermarkPicture(html, page, wm);         // the picture first, so any text lies over it
+        if (string.IsNullOrWhiteSpace(wm.Text)) return;
 
         var text = wm.Text.Replace('\r', ' ').Replace('\n', ' ');
         double size = wm.FontSize * 96.0 / 72.0;                // points -> CSS pixels
@@ -103,6 +106,28 @@ public static class HtmlExporter
             .Append(";opacity:").Append(Math.Round(Math.Clamp(wm.Opacity, 0, 1), 2).ToString("0.##", inv))
             .Append(";transform:rotate(").Append((-wm.Angle).ToString("0.##", inv)).Append("deg)\">")     // CSS turns clockwise
             .Append(WebUtility.HtmlEncode(text)).Append("</span></div>\n");
+    }
+
+    /// <summary>
+    /// The watermark picture, centred, turned and faded like the text, at the size <see cref="WatermarkLayout.PictureSize"/> gives
+    /// (the same as the preview and the PDF). A picture that cannot be read, or an unsafe SVG, is left out.
+    /// </summary>
+    private static void AppendWatermarkPicture(StringBuilder html, RenderedPage page, RenderedWatermark wm)
+    {
+        var picture = wm.Image;
+        if (picture == null || picture.Length == 0) return;
+        if (ImageData.LooksLikeSvg(picture) ? !ImageData.IsSafeSvg(picture) : !ImageData.LooksLikePicture(picture)) return;
+        if (SvgRaster.Dimensions(picture) is not { } size) return;
+
+        var (w, h) = WatermarkLayout.PictureSize(size.Width, size.Height, page.Width, page.Height, wm.Angle, wm.ImageSize);
+        if (w <= 0 || h <= 0) return;
+        var inv = CultureInfo.InvariantCulture;
+
+        html.Append("<div style=\"left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;overflow:hidden;pointer-events:none\">")
+            .Append("<img alt=\"\" style=\"width:").Append(Px(w)).Append("px;height:").Append(Px(h)).Append("px")
+            .Append(";opacity:").Append(Math.Round(Math.Clamp(wm.Opacity, 0, 1), 2).ToString("0.##", inv))
+            .Append(";transform:rotate(").Append((-wm.Angle).ToString("0.##", inv)).Append("deg)\" src=\"data:").Append(Mime(picture))
+            .Append(";base64,").Append(Convert.ToBase64String(picture)).Append("\"></div>\n");     // CSS turns clockwise
     }
 
     /// <summary>A bookmark becomes an anchor at the item; a link becomes a transparent clickable box over it.</summary>

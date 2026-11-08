@@ -55,8 +55,11 @@ public static class PdfExporter
     private static void DrawWatermark(PdfDocument doc, PdfPage g, RenderedPage page)
     {
         var wm = page.Watermark;
-        if (wm == null || string.IsNullOrWhiteSpace(wm.Text) || page.Width <= 0 || page.Height <= 0) return;
+        if (wm == null || page.Width <= 0 || page.Height <= 0) return;
         if (WatermarkLayout.Alpha(wm.Opacity) == 0) return;
+
+        DrawWatermarkPicture(doc, g, page, wm);         // the picture first, so any text lies over it
+        if (string.IsNullOrWhiteSpace(wm.Text)) return;
 
         var text = Clean(wm.Text.Replace('\r', ' ').Replace('\n', ' '));
         if (text.Length == 0) return;
@@ -72,6 +75,32 @@ public static class PdfExporter
         // In the turned frame the line is centred on the origin: half its width back, and its box centred on the baseline.
         g.Text(font, size, -width / 2, face.BaselineOffset(size) - face.LineHeight(size) / 2, text, color);
         g.PopRotation();
+    }
+
+    /// <summary>The watermark picture, centred, turned and faded like the text. An unreadable picture leaves the page as it is.</summary>
+    private static void DrawWatermarkPicture(PdfDocument doc, PdfPage g, RenderedPage page, RenderedWatermark wm)
+    {
+        if (wm.Image == null || wm.Image.Length == 0) return;
+        try
+        {
+            var picture = SvgRaster.Resolve(wm.Image, page.Width * wm.ImageSize / 100, page.Height, 2);     // an SVG drawing becomes a PNG
+            if (picture.Length == 0) return;
+            using var bitmap = new Bitmap(new MemoryStream(picture));
+            var (w, h) = WatermarkLayout.PictureSize(bitmap.Width, bitmap.Height, page.Width, page.Height, wm.Angle, wm.ImageSize);
+            if (w <= 0 || h <= 0) return;
+
+            var key = Convert.ToHexString(SHA256.HashData(picture));
+            var name = doc.Image(key, () => new Bitmap(bitmap));
+
+            g.PushRotation(page.Width / 2, page.Height / 2, wm.Angle);
+            g.SetOpacity(doc.Opacity(wm.Opacity));
+            g.Image(name, -w / 2, -h / 2, w, h);               // in the turned frame the picture is centred on the origin
+            g.PopRotation();
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or ExternalException)
+        {
+            // unreadable picture: leave it out
+        }
     }
 
     /// <summary>Makes the item's box clickable: a web address, mail or phone link, or a jump to a bookmark.</summary>

@@ -25,6 +25,25 @@ internal static class SvgRaster
     }
 
     /// <summary>
+    /// The pixel size of a picture, to learn its proportions (an SVG is drawn small for this); null when it cannot be read.
+    /// </summary>
+    public static (double Width, double Height)? Dimensions(byte[] picture)
+    {
+        try
+        {
+            var bytes = ImageData.LooksLikeSvg(picture) ? ToPng(picture, 1000, 1000, 1) : picture;
+            if (bytes == null || bytes.Length == 0) return null;
+            using var ms = new MemoryStream(bytes);
+            using var image = System.Drawing.Image.FromStream(ms);
+            return (image.Width, image.Height);
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// The size to draw at: the drawing's own proportions, fitted inside the box times <paramref name="scale"/>
     /// (no drawn size known: the box's proportions), never below 1 or above 4000 pixels on a side.
     /// </summary>

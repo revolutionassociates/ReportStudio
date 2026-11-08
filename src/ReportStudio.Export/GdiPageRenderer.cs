@@ -50,9 +50,12 @@ public static class GdiPageRenderer
     private static void DrawWatermark(Graphics g, RenderedPage page)
     {
         var wm = page.Watermark;
-        if (wm == null || string.IsNullOrWhiteSpace(wm.Text) || page.Width <= 0 || page.Height <= 0) return;
+        if (wm == null || page.Width <= 0 || page.Height <= 0) return;
         int alpha = WatermarkLayout.Alpha(wm.Opacity);
         if (alpha == 0) return;
+
+        DrawWatermarkPicture(g, page, wm, alpha);       // the picture first, so any text lies over it
+        if (string.IsNullOrWhiteSpace(wm.Text)) return;
 
         var text = wm.Text.Replace('\r', ' ').Replace('\n', ' ');
         var color = ColorUtil.Parse(wm.Color) ?? Color.Gray;
@@ -74,6 +77,31 @@ public static class GdiPageRenderer
         g.RotateTransform((float)-wm.Angle);                            // GDI+ turns clockwise; the setting turns counter-clockwise
         g.DrawString(text, font, brush, PointF.Empty, format);
         g.Restore(state);
+    }
+
+    /// <summary>The watermark picture, centred, turned and faded like the text. An unreadable picture leaves the page as it is.</summary>
+    private static void DrawWatermarkPicture(Graphics g, RenderedPage page, RenderedWatermark wm, int alpha)
+    {
+        if (wm.Image == null || wm.Image.Length == 0) return;
+        try
+        {
+            var picture = SvgRaster.Resolve(wm.Image, page.Width * wm.ImageSize / 100, page.Height, 1);     // an SVG drawing becomes a PNG
+            if (picture.Length == 0) return;
+            using var ms = new MemoryStream(picture);
+            using var img = Image.FromStream(ms);
+            var (w, h) = WatermarkLayout.PictureSize(img.Width, img.Height, page.Width, page.Height, wm.Angle, wm.ImageSize);
+            if (w <= 0 || h <= 0) return;
+
+            using var attributes = new System.Drawing.Imaging.ImageAttributes();
+            attributes.SetColorMatrix(new System.Drawing.Imaging.ColorMatrix { Matrix33 = alpha / 255f });   // see-through, keeping the picture's own transparency
+            var state = g.Save();
+            g.TranslateTransform((float)page.Width / 2, (float)page.Height / 2);
+            g.RotateTransform((float)-wm.Angle);                            // GDI+ turns clockwise; the setting turns counter-clockwise
+            g.DrawImage(img, new RectangleF((float)(-w / 2), (float)(-h / 2), (float)w, (float)h),
+                0, 0, img.Width, img.Height, GraphicsUnit.Pixel, attributes);
+            g.Restore(state);
+        }
+        catch (ArgumentException) { /* unreadable picture: leave it out */ }
     }
 
     public static void DrawItem(Graphics g, RenderedItem item)

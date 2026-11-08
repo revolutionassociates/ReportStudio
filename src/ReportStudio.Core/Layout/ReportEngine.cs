@@ -522,14 +522,32 @@ public static class ReportEngine
         private RenderedWatermark? MakeWatermark()
         {
             var w = _def.Watermark;
-            if (w == null || string.IsNullOrWhiteSpace(w.Text) || !(w.Opacity > 0)) return null;
+            if (w == null || !(w.Opacity > 0)) return null;
             var row = _rows.Count > 0 ? _rows[0] : _emptyRow;
-            var text = SafeText(w.Text, "", Ctx(row, _rows)).Trim();
-            if (text.Length == 0) return null;
+            var text = string.IsNullOrWhiteSpace(w.Text) ? "" : SafeText(w.Text, "", Ctx(row, _rows)).Trim();
+            var picture = WatermarkPicture();
+            if (text.Length == 0 && picture == null) return null;
             return new RenderedWatermark
             {
-                Text = text, Color = w.Color, Opacity = w.Opacity, Angle = w.Angle, FontSize = w.FontSize, Bold = w.Bold
+                Text = text, Color = w.Color, Opacity = w.Opacity, Angle = w.Angle, FontSize = w.FontSize, Bold = w.Bold,
+                Image = picture, ImageSize = w.ImageSize
             };
+        }
+
+        private bool _watermarkPictureChecked;
+        private byte[]? _watermarkPicture;
+
+        /// <summary>The watermark picture, checked once per run: a picture the report may print, or null (with one warning when it is unusable).</summary>
+        private byte[]? WatermarkPicture()
+        {
+            if (_watermarkPictureChecked) return _watermarkPicture;
+            _watermarkPictureChecked = true;
+            var text = _def.Watermark?.ImageBase64;
+            if (string.IsNullOrWhiteSpace(text)) return null;
+            _watermarkPicture = ImageData.FromText(text);
+            if (_watermarkPicture == null)
+                Warn("The watermark picture was left out: it is not a PNG, JPEG, GIF, BMP, TIFF or plain SVG drawing (no scripts or links to other files or web addresses).");
+            return _watermarkPicture;
         }
 
         /// <summary>The colour behind each page, or null when none is set (a gradient colour alone is not enough: it needs the first colour).</summary>

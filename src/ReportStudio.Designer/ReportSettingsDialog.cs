@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using ReportStudio.Core.Data;
+using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
 using ReportStudio.Export;
 
@@ -47,6 +48,9 @@ public sealed class ReportSettingsDialog : Form
     private readonly NumericUpDown _wmAngle = new() { Minimum = -360, Maximum = 360, Width = 80 };
     private readonly NumericUpDown _wmSize = new() { Minimum = 6, Maximum = 600, Width = 80 };
     private readonly CheckBox _wmBold = new() { Text = "Bold", AutoSize = true };
+    private string _wmImage = "";                       // base64 of the chosen watermark picture; "" = none
+    private readonly Label _wmPictureName = new() { AutoSize = true, Padding = new Padding(0, 6, 0, 0), Text = "(none)" };
+    private readonly NumericUpDown _wmPictureSize = new() { Minimum = 5, Maximum = 100, Width = 80 };
 
     private static readonly (string Label, double W, double H)[] PageSizes =
     {
@@ -130,6 +134,15 @@ public sealed class ReportSettingsDialog : Form
         AddRow(t, "Font size (pt)", _wmSize);
         AddRow(t, "", _wmBold);
 
+        var choose = new Button { Text = "Choose...", AutoSize = true };
+        var remove = new Button { Text = "Remove", AutoSize = true };
+        choose.Click += (_, _) => ChooseWatermarkPicture();
+        remove.Click += (_, _) => { _wmImage = ""; ShowWatermarkPicture(); };
+        var pictureRow = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false };
+        pictureRow.Controls.AddRange(new Control[] { choose, remove, _wmPictureName });
+        AddRow(t, "Watermark picture", pictureRow);
+        AddRow(t, "Picture width (% of page)", _wmPictureSize);
+
         var hint = new Label
         {
             Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 10, 0, 0), MaximumSize = new Size(680, 0),
@@ -137,7 +150,9 @@ public sealed class ReportSettingsDialog : Form
                    "Leave the page colour empty for a plain page. " +
                    "The watermark is faint text behind the content of every page, such as DRAFT or CONFIDENTIAL. " +
                    "It may use {expressions}, e.g. {@Status}. Leave the text empty for no watermark. " +
-                   "Angle 0 runs straight along the page, 45 rises to the right. A long text is made smaller to fit the page."
+                   "Angle 0 runs straight along the page, 45 rises to the right. A long text is made smaller to fit the page. " +
+                   "A watermark picture (PNG, JPEG, GIF, BMP, TIFF or a plain SVG drawing) is printed the same way, with the same opacity and angle, " +
+                   "with or without text; it is made smaller when, turned, it would not fit on the page."
         };
         page.Controls.Add(hint);
         page.Controls.Add(t);
@@ -374,6 +389,9 @@ public sealed class ReportSettingsDialog : Form
         _wmAngle.Value = (decimal)Math.Clamp(Math.Round(wm.Angle), -360, 360);
         _wmSize.Value = (decimal)Math.Clamp(Math.Round(wm.FontSize), 6, 600);
         _wmBold.Checked = wm.Bold;
+        _wmImage = wm.ImageBase64 ?? "";
+        _wmPictureSize.Value = (decimal)Math.Clamp(Math.Round(wm.ImageSize), 5, 100);
+        ShowWatermarkPicture();
 
         _provider.SelectedIndex = (int)_def.DataSource.Provider;
         UpdateHostState();
@@ -467,6 +485,8 @@ public sealed class ReportSettingsDialog : Form
         _def.Watermark.Angle = (double)_wmAngle.Value;
         _def.Watermark.FontSize = (double)_wmSize.Value;
         _def.Watermark.Bold = _wmBold.Checked;
+        _def.Watermark.ImageBase64 = _wmImage;
+        _def.Watermark.ImageSize = (double)_wmPictureSize.Value;
 
         _def.Name = string.IsNullOrWhiteSpace(_name.Text) ? "Untitled Report" : _name.Text.Trim();
         _def.Filter = _filter.Text.Trim();
@@ -542,6 +562,38 @@ public sealed class ReportSettingsDialog : Form
     }
 
     // ---- helpers -------------------------------------------------------------------------------
+
+    /// <summary>Lets the user pick the watermark picture; only a picture the report may print (or a plain SVG drawing) is taken.</summary>
+    private void ChooseWatermarkPicture()
+    {
+        using var dlg = new OpenFileDialog { Filter = "Pictures|*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.svg|All files|*.*" };
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            var bytes = File.ReadAllBytes(dlg.FileName);
+            if (bytes.Length > 5 * 1024 * 1024)
+            {
+                MessageBox.Show(this, "This picture is larger than 5 MB. A watermark is kept inside the report file, so choose a smaller picture.", Text,
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (!ImageData.IsPicture(bytes))
+            {
+                MessageBox.Show(this, "This file cannot be used as a watermark picture. Choose a PNG, JPEG, GIF, BMP or TIFF picture, " +
+                    "or a plain SVG drawing (no scripts or links to other files or web addresses).", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            _wmImage = Convert.ToBase64String(bytes);
+            ShowWatermarkPicture();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void ShowWatermarkPicture() =>
+        _wmPictureName.Text = _wmImage.Length == 0 ? "(none)" : $"picture set ({Math.Max(1, _wmImage.Length * 3L / 4 / 1024)} KB)";
 
     private static void AddRow(TableLayoutPanel t, string label, Control input)
     {

@@ -192,9 +192,22 @@ public class WatermarkSettings
 
     public bool Bold { get; set; } = true;
 
+    /// <summary>
+    /// A picture kept in the report file (base64 of a PNG, JPEG, GIF, BMP, TIFF or plain SVG), printed behind the content like the text,
+    /// with the same opacity and angle. Empty = no picture. Text and picture can be used together.
+    /// </summary>
+    public string ImageBase64 { get; set; } = "";
+
+    /// <summary>How wide the picture may be, in percent of the page width (it is made smaller when, turned, it would not fit on the page).</summary>
+    public double ImageSize { get; set; } = DefaultImageSize;
+
+    public const double DefaultImageSize = 50;
+
     /// <summary>Puts every value in its usable range (a file may carry anything).</summary>
     public void Normalize()
     {
+        ImageBase64 = (ImageBase64 ?? "").Trim();
+        ImageSize = double.IsFinite(ImageSize) ? Math.Clamp(ImageSize, 5, 100) : DefaultImageSize;
         Text ??= "";
         Color = string.IsNullOrWhiteSpace(Color) ? DefaultColor : Color.Trim();
         Opacity = double.IsFinite(Opacity) ? Math.Clamp(Opacity, 0, 1) : 0.3;
