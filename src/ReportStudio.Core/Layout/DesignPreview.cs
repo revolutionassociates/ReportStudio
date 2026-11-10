@@ -39,10 +39,11 @@ public sealed class DesignPreview
     public void Next() => CurrentIndex = _rows.Count == 0 ? 0 : (_current + 1) % _rows.Count;
 
     /// <summary>Loads the report's rows (at most <paramref name="maxRows"/>). Throws when the data source cannot be read.</summary>
-    public static DesignPreview Load(ReportDefinition def, IDictionary<string, string?>? rawParameters, int maxRows = DefaultMaxRows)
+    public static DesignPreview Load(ReportDefinition def, IDictionary<string, string?>? rawParameters, int maxRows = DefaultMaxRows,
+        string? baseDirectory = null)
     {
         var parameters = ReportEngine.ResolveParameters(def, rawParameters);
-        var rows = DataLoader.Load(def.DataSource, parameters);
+        var rows = DataLoader.Load(def.DataSource, parameters, new ReportStudio.Core.Data.Sources.SourceSettings { BaseDirectory = baseDirectory });
         return new DesignPreview(rows.Take(Math.Max(1, maxRows)).ToList(), parameters);
     }
 

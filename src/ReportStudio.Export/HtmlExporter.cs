@@ -49,13 +49,20 @@ public static class HtmlExporter
         html.Append(".w>div{white-space:pre-wrap;overflow-wrap:anywhere}\n");
         html.Append("svg{display:block}\n");
         html.Append("@page{size:").Append(Px(pageW)).Append("px ").Append(Px(pageH)).Append("px;margin:0}\n");
+        // Pages of different sizes (requirement 38): every size gets a named page, so printing a page uses its own paper size.
+        var sizes = report.Pages.Select(p => (p.Width, p.Height)).Distinct().ToList();
+        bool mixed = sizes.Count > 1;
+        if (mixed)
+            for (int i = 0; i < sizes.Count; i++)
+                html.Append("@page s").Append(i).Append("{size:").Append(Px(sizes[i].Width)).Append("px ").Append(Px(sizes[i].Height)).Append("px;margin:0}\n");
         html.Append("@media print{body{background:#fff}.page{margin:0;box-shadow:none;break-after:page}.page:last-child{break-after:auto}}\n");
         html.Append("</style>\n</head>\n<body>\n");
 
         foreach (var page in report.Pages)
         {
             html.Append("<section class=\"page\" style=\"width:").Append(Px(page.Width)).Append("px;height:")
-                .Append(Px(page.Height)).Append("px").Append(BackgroundCss(page.Background)).Append("\">\n");
+                .Append(Px(page.Height)).Append("px").Append(mixed ? ";page:s" + sizes.IndexOf((page.Width, page.Height)) : "")
+                .Append(BackgroundCss(page.Background)).Append("\">\n");
             AppendWatermark(html, page);        // first, so it lies behind the items
             foreach (var item in page.Items) { AppendItem(html, item); AppendInteraction(html, item); }
             html.Append("</section>\n");

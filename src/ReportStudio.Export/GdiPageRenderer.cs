@@ -4,6 +4,7 @@ using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
+using ReportStudio.Core.Text;
 
 namespace ReportStudio.Export;
 
@@ -61,7 +62,8 @@ public static class GdiPageRenderer
         var color = ColorUtil.Parse(wm.Color) ?? Color.Gray;
         using var format = new StringFormat(StringFormat.GenericTypographic)
         {
-            Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center,
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center,
             FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces
         };
 
@@ -98,7 +100,7 @@ public static class GdiPageRenderer
             g.TranslateTransform((float)page.Width / 2, (float)page.Height / 2);
             g.RotateTransform((float)-wm.Angle);                            // GDI+ turns clockwise; the setting turns counter-clockwise
             g.DrawImage(img, new RectangleF((float)(-w / 2), (float)(-h / 2), (float)w, (float)h),
-                0, 0, img.Width, img.Height, GraphicsUnit.Pixel, attributes);
+                new RectangleF(0, 0, img.Width, img.Height), GraphicsUnit.Pixel, attributes);
             g.Restore(state);
         }
         catch (ArgumentException) { /* unreadable picture: leave it out */ }
@@ -113,39 +115,39 @@ public static class GdiPageRenderer
         switch (item.Kind)
         {
             case ItemKind.Line:
-            {
-                var c = ColorUtil.Parse(item.ForeColor) ?? Color.Black;
-                using var pen = new Pen(c, (float)Math.Max(0.5, item.BorderWidth));
-                g.DrawLine(pen, rect.Left, rect.Top, rect.Right, rect.Bottom);
-                return;
-            }
+                {
+                    var c = ColorUtil.Parse(item.ForeColor) ?? Color.Black;
+                    using var pen = new Pen(c, (float)Math.Max(0.5, item.BorderWidth));
+                    g.DrawLine(pen, rect.Left, rect.Top, rect.Right, rect.Bottom);
+                    return;
+                }
             case ItemKind.Rectangle:
             case ItemKind.Ellipse:
-            {
-                var bc = border ?? ColorUtil.Parse(item.ForeColor) ?? Color.Black;
-                bool ellipse = item.Kind == ItemKind.Ellipse;
-                double radius = ellipse ? 0 : ShapeGeometry.CornerRadius(item.CornerRadius, rect.Width, rect.Height);
-                if (ellipse || radius > 0)
                 {
-                    if (rect.Width <= 0 || rect.Height <= 0) return;
-                    using var path = ellipse ? EllipsePath(rect) : RoundedPath(rect, (float)radius);
-                    if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillPath(b, path); }
+                    var bc = border ?? ColorUtil.Parse(item.ForeColor) ?? Color.Black;
+                    bool ellipse = item.Kind == ItemKind.Ellipse;
+                    double radius = ellipse ? 0 : ShapeGeometry.CornerRadius(item.CornerRadius, rect.Width, rect.Height);
+                    if (ellipse || radius > 0)
+                    {
+                        if (rect.Width <= 0 || rect.Height <= 0) return;
+                        using var path = ellipse ? EllipsePath(rect) : RoundedPath(rect, (float)radius);
+                        if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillPath(b, path); }
+                        if (item.BorderWidth > 0)
+                        {
+                            using var outline = new Pen(bc, (float)item.BorderWidth);
+                            g.DrawPath(outline, path);
+                        }
+                        return;
+                    }
+
+                    if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillRectangle(b, rect); }
                     if (item.BorderWidth > 0)
                     {
-                        using var outline = new Pen(bc, (float)item.BorderWidth);
-                        g.DrawPath(outline, path);
+                        using var pen = new Pen(bc, (float)item.BorderWidth);
+                        g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
                     }
                     return;
                 }
-
-                if (back != null) { using var b = FillBrush(item, rect, back.Value); g.FillRectangle(b, rect); }
-                if (item.BorderWidth > 0)
-                {
-                    using var pen = new Pen(bc, (float)item.BorderWidth);
-                    g.DrawRectangle(pen, rect.X, rect.Y, rect.Width, rect.Height);
-                }
-                return;
-            }
             case ItemKind.Image:
                 DrawImage(g, item, rect);
                 break;
@@ -263,11 +265,89 @@ public static class GdiPageRenderer
     private static void DrawText(Graphics g, RenderedItem item, RectangleF rect)
     {
         if (string.IsNullOrEmpty(item.Text)) return;
+        if (item.Runs is { Count: > 0 }) { DrawRichText(g, item, rect); return; }
         using var font = CreateFont(item.FontFamily, item.FontSize, item.Bold, item.Italic, item.Underline);
         using var brush = new SolidBrush(ColorUtil.Parse(item.ForeColor) ?? Color.Black);
         using var fmt = CreateFormat(item);
         var inner = RectangleF.Inflate(rect, -2, 0);
         g.DrawString(item.Text, font, brush, inner, fmt);
+    }
+
+    /// <summary>
+    /// Rich text (requirement 36b): the runs are broken into lines by the shared RichLayout, then every piece is drawn in its own look,
+    /// sitting on a common baseline. Without word wrap the lines are clipped to the box, not ellipsised.
+    /// </summary>
+    private static void DrawRichText(Graphics g, RenderedItem item, RectangleF rect)
+    {
+        var inner = RectangleF.Inflate(rect, -2, 0);
+        var fonts = new Dictionary<TextRun, Font>();
+        var brushes = new Dictionary<string, SolidBrush>();
+        using var fmt = new StringFormat(StringFormat.GenericTypographic)
+        {
+            FormatFlags = StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap | StringFormatFlags.NoClip
+        };
+        var state = g.Save();
+        try
+        {
+            Font FontOf(TextRun run)
+            {
+                if (fonts.TryGetValue(run, out var cached)) return cached;
+                var f = CreateFont(item.FontFamily, item.FontSize, item.Bold || run.Bold, item.Italic || run.Italic, item.Underline || run.Underline);
+                if (run.Strike) { var styled = new Font(f, f.Style | FontStyle.Strikeout); f.Dispose(); f = styled; }
+                fonts[run] = f;
+                return f;
+            }
+            SolidBrush BrushOf(TextRun run)
+            {
+                var key = run.Color.Length > 0 ? run.Color : item.ForeColor;
+                if (brushes.TryGetValue(key, out var cached)) return cached;
+                var b = new SolidBrush(ColorUtil.Parse(key) ?? ColorUtil.Parse(item.ForeColor) ?? Color.Black);
+                brushes[key] = b;
+                return b;
+            }
+            // Heights come from the font's design metrics, so they do not depend on the device.
+            static double Metric(Font f, Func<FontFamily, FontStyle, int> pick) =>
+                pick(f.FontFamily, f.Style) * (double)f.Size / f.FontFamily.GetEmHeight(f.Style);
+            double Measure(TextRun run, string text) => g.MeasureString(text, FontOf(run), PointF.Empty, fmt).Width;
+            double Height(TextRun run) => Metric(FontOf(run), (ff, st) => ff.GetLineSpacing(st));
+            double Ascent(TextRun run) => Metric(FontOf(run), (ff, st) => ff.GetCellAscent(st));
+
+            using var basis = CreateFont(item.FontFamily, item.FontSize, item.Bold, item.Italic, false);
+            double emptyHeight = Metric(basis, (ff, st) => ff.GetLineSpacing(st));
+
+            var lines = RichLayout.Wrap(item.Runs!, inner.Width, item.WordWrap, Measure, Height, emptyHeight);
+            double total = RichLayout.TotalHeight(lines);
+            double y = item.VAlign switch
+            {
+                VAlign.Middle => inner.Y + (inner.Height - total) / 2,
+                VAlign.Bottom => inner.Bottom - total,
+                _ => inner.Y
+            };
+
+            g.SetClip(rect, CombineMode.Intersect);
+            foreach (var line in lines)
+            {
+                double x = item.HAlign switch
+                {
+                    HAlign.Center => inner.X + (inner.Width - line.Width) / 2,
+                    HAlign.Right => inner.Right - line.Width,
+                    _ => inner.X
+                };
+                double baseline = y + (line.Pieces.Count == 0 ? 0 : line.Pieces.Max(p => Ascent(p.Run)));
+                foreach (var piece in line.Pieces)
+                {
+                    g.DrawString(piece.Text, FontOf(piece.Run), BrushOf(piece.Run), (float)x, (float)(baseline - Ascent(piece.Run)), fmt);
+                    x += piece.Width;
+                }
+                y += line.Height;
+            }
+        }
+        finally
+        {
+            g.Restore(state);
+            foreach (var f in fonts.Values) f.Dispose();
+            foreach (var b in brushes.Values) b.Dispose();
+        }
     }
 
     public static StringFormat CreateFormat(RenderedItem item)

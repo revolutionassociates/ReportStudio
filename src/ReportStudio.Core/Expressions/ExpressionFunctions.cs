@@ -15,6 +15,7 @@ public static class ExpressionFunctions
     public const string Numbers = "Numbers";
     public const string Dates = "Dates";
     public const string Ranges = "Ranges (for grouping)";
+    public const string DataSets = "Other data sets";
 
     public static IReadOnlyList<FunctionInfo> All { get; } = new List<FunctionInfo>
     {
@@ -58,6 +59,11 @@ public static class ExpressionFunctions
         new(Ranges, "Bucket", "Bucket(number, size)", "Lower end of the equal-sized range the number falls in: Bucket(1750, 1000) is 1000.", "Bucket(Amount, 10000)"),
         new(Ranges, "Range", "Range(number, limit1, limit2, ...)", "Lower limit of the range, among limits you choose. Groups sort in order.", "Range(Amount, 1000, 5000, 20000)"),
         new(Ranges, "RangeLabel", "RangeLabel(number, limit1, limit2, ...)", "Like Range, but gives a readable label such as '1,000 to below 5,000'.", "RangeLabel(Amount, 1000, 5000, 20000)"),
+
+        new(DataSets, "Lookup", "Lookup(dataSet, keyField, value, resultField)", "Finds the row of another data set whose key field equals the value and gives its result field (the first one when there are several; empty when there is none).", "Lookup('Departments', 'Code', DeptCode, 'Name')"),
+        new(DataSets, "LookupSum", "LookupSum(dataSet, keyField, value, resultField)", "Adds the result field over all rows of another data set whose key field equals the value.", "LookupSum('Leaves', 'EmpCode', EmpCode, 'Days')"),
+        new(DataSets, "LookupCount", "LookupCount(dataSet, keyField, value)", "Counts the rows of another data set whose key field equals the value.", "LookupCount('Leaves', 'EmpCode', EmpCode)"),
+        new(DataSets, "LookupList", "LookupList(dataSet, keyField, value, resultField, separator)", "The result field of all matching rows as one text, e.g. 'Sick, Casual'. The separator is optional (', ' by default).", "LookupList('Leaves', 'EmpCode', EmpCode, 'Type', '; ')"),
     };
 
     /// <summary>Values that are written without brackets.</summary>

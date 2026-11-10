@@ -33,6 +33,30 @@ public class ReportOptions
 
     /// <summary>How many sub-reports deep this run is (set by the engine).</summary>
     internal int SubReportDepth { get; set; }
+
+    /// <summary>
+    /// When set, JSON, XML, CSV and Excel data files can only be read from inside this folder (requirement 40): for a host that runs reports
+    /// written by other people. Empty = any file the user can read.
+    /// </summary>
+    public string? SourceRoot { get; set; }
+
+    /// <summary>Allows data files on network paths (\\server\share). Off by default, because opening one sends the user's Windows credentials to that server.</summary>
+    public bool AllowNetworkPaths { get; set; }
+
+    internal ReportStudio.Core.Data.Sources.SourceSettings SourceSettings => new()
+    {
+        BaseDirectory = BaseDirectory, FileRoot = SourceRoot, AllowNetworkPaths = AllowNetworkPaths
+    };
+
+    /// <summary>The report's data sets for this run (requirement 39), built by the engine from the report's definition and <see cref="DataSets"/>.</summary>
+    internal DataSetCatalog? Catalog { get; set; }
+
+    internal ReportOptions WithCatalog(DataSetCatalog catalog) => new()
+    {
+        Culture = Culture, BaseDirectory = BaseDirectory, Measurer = Measurer, Rows = Rows, Now = Now,
+        SubReports = SubReports, DataSets = DataSets, ToggledGroups = ToggledGroups, SubReportDepth = SubReportDepth,
+        SourceRoot = SourceRoot, AllowNetworkPaths = AllowNetworkPaths, Catalog = catalog
+    };
 }
 
 /// <summary>
@@ -48,14 +72,17 @@ public static class ReportEngine
         def.Normalize();
 
         var parameters = ResolveParameters(def, parameterValues);
+        var filterWarnings = new List<string>();
+        var catalog = BuildCatalog(def, options, parameters);
+        options = options.WithCatalog(catalog);
 
         List<Row> rows;
         if (options.Rows != null) rows = options.Rows;
         else if (def.DataSource.Provider == DbProvider.Host)
             throw new InvalidOperationException(
                 "This report takes its data from the host application. Call Run with the rows supplied.");
-        else rows = DataLoader.Load(def.DataSource, parameters);
-        var filterWarnings = new List<string>();
+        else rows = DataLoader.Load(def.DataSource, parameters, options.SourceSettings);
+        rows = ApplyJoins(def, rows, catalog, filterWarnings);
         rows = Filter(def, rows, parameters, options, filterWarnings);
         rows = Sort(def, rows, parameters, options);
         rows = OrderGroups(def, rows, parameters, options, filterWarnings);
@@ -72,6 +99,44 @@ public static class ReportEngine
     }
 
     /// <summary>
+    /// The data sets of this run: the ones the host supplied by name, and the ones the report declares that read their own rows
+    /// (a Host data set takes the host's rows of the same name; one the host did not supply is simply missing, and a Lookup of it is an error).
+    /// </summary>
+    private static DataSetCatalog BuildCatalog(ReportDefinition def, ReportOptions options, Row parameters)
+    {
+        var sets = new Dictionary<string, List<Row>>(StringComparer.OrdinalIgnoreCase);
+        if (options.DataSets != null)
+            foreach (var (name, rows) in options.DataSets)
+                sets[name] = rows.Select(ToRow).ToList();
+
+        foreach (var set in def.DataSets)
+        {
+            if (set.Name.Length == 0 || set.DataSource.Provider == DbProvider.Host) continue;
+            sets[set.Name] = DataLoader.Load(set.DataSource, parameters, options.SourceSettings);
+        }
+        return new DataSetCatalog(sets);
+    }
+
+    /// <summary>Adds the fields of the joined data sets to the rows, one join after the other. A join that cannot be done is skipped and reported.</summary>
+    private static List<Row> ApplyJoins(ReportDefinition def, List<Row> rows, DataSetCatalog catalog, List<string> warnings)
+    {
+        foreach (var join in def.Joins)
+        {
+            string problem =
+                join.DataSet.Length == 0 || join.LeftField.Length == 0 ? "it needs a data set and a field of the report's rows" :
+                !catalog.Contains(join.DataSet) ? $"there is no data set '{join.DataSet}'" : "";
+            if (problem.Length > 0)
+            {
+                var message = $"Join '{join.DataSet}': {problem}, so it was left out.";
+                if (!warnings.Contains(message)) warnings.Add(message);
+                continue;
+            }
+            rows = RowJoiner.Join(rows, catalog, join);
+        }
+        return rows;
+    }
+
+    /// <summary>
     /// Keeps the rows for which the report's filter is true. A row the filter cannot be worked out for is left out
     /// and reported once, so a typo shows up as a warning and an obviously short report rather than as wrong totals.
     /// </summary>
@@ -83,7 +148,7 @@ public static class ReportEngine
         var kept = new List<Row>(rows.Count);
         foreach (var row in rows)
         {
-            var ctx = new EvalContext { Row = row, Parameters = parameters, Culture = options.Culture };
+            var ctx = new EvalContext { Row = row, Parameters = parameters, Culture = options.Culture, DataSets = options.Catalog };
             try { if (Expr.IsTrue(Expr.Evaluate(def.Filter, ctx))) kept.Add(row); }
             catch (ExpressionException ex)
             {
@@ -103,7 +168,7 @@ public static class ReportEngine
         {
             Culture = o.Culture, BaseDirectory = o.BaseDirectory, Measurer = o.Measurer, Now = o.Now,
             SubReports = o.SubReports, DataSets = o.DataSets, SubReportDepth = o.SubReportDepth,
-            ToggledGroups = o.ToggledGroups,
+            ToggledGroups = o.ToggledGroups, SourceRoot = o.SourceRoot, AllowNetworkPaths = o.AllowNetworkPaths,
             Rows = rows.Select(ToRow).ToList()
         };
         return Run(def, parameterValues, copy);
@@ -152,10 +217,10 @@ public static class ReportEngine
         int i = 0;
         while (i < rows.Count)
         {
-            var key = SafeKey(group.Expression, new EvalContext { Row = rows[i], Parameters = parameters, Culture = options.Culture });
+            var key = SafeKey(group.Expression, new EvalContext { Row = rows[i], Parameters = parameters, Culture = options.Culture, DataSets = options.Catalog });
             int j = i + 1;
             while (j < rows.Count && Expr.Compare(key,
-                       SafeKey(group.Expression, new EvalContext { Row = rows[j], Parameters = parameters, Culture = options.Culture })) == 0) j++;
+                       SafeKey(group.Expression, new EvalContext { Row = rows[j], Parameters = parameters, Culture = options.Culture, DataSets = options.Catalog })) == 0) j++;
             partitions.Add(rows.GetRange(i, j - i));
             i = j;
         }
@@ -178,7 +243,7 @@ public static class ReportEngine
     private static object? GroupSortKey(string expression, List<Row> partition, Row parameters, ReportOptions options,
         List<string> warnings)
     {
-        var ctx = new EvalContext { Row = partition[0], Scope = partition, Parameters = parameters, Culture = options.Culture };
+        var ctx = new EvalContext { Row = partition[0], Scope = partition, Parameters = parameters, Culture = options.Culture, DataSets = options.Catalog };
         try { return Expr.Evaluate(expression, ctx); }
         catch (ExpressionException ex)
         {
@@ -197,7 +262,7 @@ public static class ReportEngine
         var cmp = Comparer<object?>.Create(Expr.Compare);
         var keyed = rows.Select(r =>
         {
-            var ctx = new EvalContext { Row = r, Parameters = parameters, Culture = options.Culture };
+            var ctx = new EvalContext { Row = r, Parameters = parameters, Culture = options.Culture, DataSets = options.Catalog };
             return new KeyedRow(r, exprs.Select(e => SafeKey(e, ctx)).ToArray());
         }).ToList();
 
@@ -247,6 +312,14 @@ public static class ReportEngine
         private int _rowNumber;
         private int _bandInstance;
         private bool _pageHasBody;
+        private PageSettings _ps;      // the page now being filled: the report's page, or a group's own size (requirement 38)
+
+        // Multi-column pages (requirement 37): a run is a stretch of detail rows laid out in columns; the group header or footer
+        // that follows ends it, and everything after starts below the longest column.
+        private bool _inRun;
+        private int _col;              // the column being filled (down order)
+        private double _colTop;        // where the columns of the run start
+        private double _runBottom;     // the lowest point any column of the run reached
         private Row _currentRow;
         private Row _footerRow;
 
@@ -272,7 +345,7 @@ public static class ReportEngine
         public Layouter(ReportDefinition def, List<Row> rows, Row parameters, ReportOptions opt,
             IReadOnlyDictionary<int, int>? sectionTotals, IReadOnlyList<OutlineEntry>? outline)
         {
-            _def = def; _rows = rows; _parameters = parameters; _opt = opt; _sectionTotals = sectionTotals; _outline = outline;
+            _def = def; _ps = def.Page; _rows = rows; _parameters = parameters; _opt = opt; _sectionTotals = sectionTotals; _outline = outline;
             _now = opt.Now ?? DateTime.Now;
             _currentRow = rows.Count > 0 ? rows[0] : _emptyRow;
             _footerRow = _currentRow;
@@ -358,18 +431,30 @@ public static class ReportEngine
             }
         }
 
-        private double BodyBottom => _def.Page.Height - _def.Page.MarginBottom - _def.PageFooter.Height;
+        private double BodyBottom => _ps.Height - _ps.MarginBottom - _def.PageFooter.Height;
 
         public ReportResult Run()
         {
             _result.ReportName = _def.Name;
             _result.RowCount = _rows.Count;
 
+            WarnWideColumnItems();
             BeginPage(first: true);
             RenderLevel(0, _rows);
             RenderBand(_def.ReportFooter, _currentRow, _rows);
             EndPage();
             return _result;
+        }
+
+        /// <summary>With several columns the detail band must fit one column; an element that reaches past it would print over the next column.</summary>
+        private void WarnWideColumnItems()
+        {
+            int columns = _ps.ColumnCount;
+            if (columns < 2) return;
+            double width = _ps.ColumnWidth;
+            foreach (var item in _def.Detail.Items)
+                if (item.X + item.Width > width + 0.5)
+                    Warn($"Detail element '{(item.Name.Length > 0 ? item.Name : item.Kind.ToString())}' is wider than a column ({width:0.#} px), so it overlaps the next column.");
         }
 
         // ---- grouping -------------------------------------------------------------------------
@@ -380,6 +465,13 @@ public static class ReportEngine
             {
                 // Widow control: the last N rows travel to the next page together with the group footer.
                 int keepFooter = level > 0 ? _def.Groups[level - 1].KeepFooterWithRows : 0;
+                if (_ps.ColumnCount > 1 && _ps.ColumnOrder == ColumnOrder.Across)
+                {
+                    int perLine = _ps.ColumnCount;
+                    for (int start = 0; start < rows.Count; start += perLine)
+                        RenderAcrossLine(rows, start, Math.Min(perLine, rows.Count - start));
+                    return;
+                }
                 for (int k = 0; k < rows.Count; k++)
                 {
                     var row = rows[k];
@@ -405,8 +497,16 @@ public static class ReportEngine
                 while (j < rows.Count && Expr.Compare(key, EvalKey(group.Expression, rows[j])) == 0) j++;
                 var partition = rows.GetRange(i, j - i);
 
-                if ((group.StartNewPage || group.RestartPageNumbers) && _pageHasBody)
-                    NewPage(restartNumbering: group.RestartPageNumbers);
+                EndRun();   // a new group starts below the columns of the one before
+
+                if (group.StartNewPage || group.RestartPageNumbers)
+                {
+                    var size = SizeFor(group, level, partition);
+                    if (_pageHasBody)
+                        NewPage(restartNumbering: group.RestartPageNumbers, size: size);
+                    else if (size.Width != _ps.Width || size.Height != _ps.Height)
+                        RestartEmptyPage(size);
+                }
 
                 // Keep-together and orphan control decide before anything of the group prints (and before its
                 // variables reset, so the page that ends here still shows the previous group's values).
@@ -442,7 +542,7 @@ public static class ReportEngine
         // ---- keeping things together ----------------------------------------------------------
 
         /// <summary>The body height of an empty page: the room a block has to fit into to be worth moving.</summary>
-        private double PageCapacity => BodyBottom - (_def.Page.MarginTop + _def.PageHeader.Height);
+        private double PageCapacity => BodyBottom - (_ps.MarginTop + _def.PageHeader.Height);
 
         /// <summary>Starts a new page when a block of this height does not fit here but would fit on a page of its own.</summary>
         private void KeepOnPage(double need)
@@ -565,14 +665,16 @@ public static class ReportEngine
             _page = new RenderedPage
             {
                 Number = ++_pageNumber, Section = _section,
-                Width = _def.Page.Width, Height = _def.Page.Height
+                Width = _ps.Width, Height = _ps.Height
             };
             _page.Watermark = MakeWatermark();
             _page.Background = MakeBackground();
             _result.Pages.Add(_page);
-            _y = _def.Page.MarginTop;
+            _y = _ps.MarginTop;
             _bandInstance = 0;
             _pageHasBody = false;
+            _inRun = false;
+            _col = 0;
             ResetVariables(v => v.Reset == VariableReset.Page);
 
             var headerRow = _rows.Count > 0 ? _rows[0] : _emptyRow;
@@ -592,16 +694,46 @@ public static class ReportEngine
         {
             var footer = _def.PageFooter;
             var saved = _y;
-            _y = _def.Page.Height - _def.Page.MarginBottom - footer.Height;
+            _y = _ps.Height - _ps.MarginBottom - footer.Height;
             PlaceBand(footer, _footerRow, _rows);   // the last row actually printed, not the next group's first row
             _y = saved;
         }
 
-        private void NewPage(bool restartNumbering = false)
+        private void NewPage(bool restartNumbering = false, (double Width, double Height)? size = null)
         {
-            EndPage();   // the finished page keeps its own numbering
+            EndPage();   // the finished page keeps its own numbering, and its footer sits at the bottom of its own size
             if (restartNumbering) { _section++; _sectionPage = 0; }
+            if (size is { } s) UseSize(s);
             BeginPage(first: false);
+        }
+
+        /// <summary>The page just begun has nothing in the body yet, so it is begun again in the new size instead of leaving it blank.</summary>
+        private void RestartEmptyPage((double Width, double Height) size)
+        {
+            _result.Pages.Remove(_page);
+            _pageNumber--; _sectionPage--;
+            bool first = _pageNumber == 0;
+            UseSize(size);
+            BeginPage(first);
+        }
+
+        private void UseSize((double Width, double Height) size)
+        {
+            if (size.Width != _ps.Width || size.Height != _ps.Height) _ps = _def.Page.WithSize(size.Width, size.Height);
+        }
+
+        /// <summary>The page size for the pages a group starts (see GroupDefinition.PageWidth): its own, else the report's for an outermost group, else the one in use.</summary>
+        private (double Width, double Height) SizeFor(GroupDefinition group, int level, List<Row> partition)
+        {
+            double w = group.PageWidth, h = group.PageHeight;
+            bool own = w >= 50 && h >= 50 && w <= 20000 && h <= 20000;
+            if (own && !string.IsNullOrWhiteSpace(group.PageSizeWhen))
+            {
+                try { own = Expr.IsTrue(Expr.Evaluate(group.PageSizeWhen, Ctx(partition[0], partition))); }
+                catch (ExpressionException ex) { Warn($"Page size condition '{group.PageSizeWhen}': {ex.Message}"); own = false; }
+            }
+            if (own) return (w, h);
+            return level == 0 ? (_def.Page.Width, _def.Page.Height) : (_ps.Width, _ps.Height);
         }
 
         // ---- bands ----------------------------------------------------------------------------
@@ -609,6 +741,8 @@ public static class ReportEngine
         /// <summary>Renders a flowing body band, breaking to a new page first when it does not fit.</summary>
         private void RenderBand(Band band, Row row, List<Row> scope, bool accumulate = false)
         {
+            if (accumulate && _ps.ColumnCount > 1) { RenderColumnRow(band, row, scope); return; }
+            EndRun();   // anything but a detail row goes full width, below the columns
             // A detail row counts toward the variables before it prints, so {RunningTotal} includes its own line.
             var before = accumulate ? SnapshotVariables() : null;
             if (accumulate) Accumulate(row, scope);
@@ -629,6 +763,101 @@ public static class ReportEngine
             _y += height;
             _pageHasBody = true;
             _footerRow = row;
+        }
+
+        /// <summary>Ends a run of columns: what follows starts below the longest column, at the full width again.</summary>
+        private void EndRun()
+        {
+            if (!_inRun) return;
+            _y = Math.Max(_y, _runBottom);
+            _inRun = false;
+            _col = 0;
+        }
+
+        /// <summary>Moves what a detail row drew into column <paramref name="column"/> (the band was designed for one column's width).</summary>
+        private void ShiftToColumn(List<RenderedItem> items, int column)
+        {
+            double shift = _ps.ColumnLeft(column);
+            foreach (var it in items) it.X += shift;
+        }
+
+        /// <summary>One detail row in "down" order: it goes under the one before in its column; when the column is full the next column starts at the top of the run, and when the last column is full a new page starts.</summary>
+        private void RenderColumnRow(Band band, Row row, List<Row> scope)
+        {
+            var before = SnapshotVariables();
+            Accumulate(row, scope);
+
+            var items = Evaluate(band, row, scope, out double height);
+            if (items.Count == 0 && height <= 0) return;
+
+            if (!_inRun) { _inRun = true; _col = 0; _colTop = _y; _runBottom = _y; }
+
+            if (_y + height > BodyBottom)
+            {
+                bool columnHasRows = _y > _colTop;
+                if (columnHasRows && _col + 1 < _ps.ColumnCount)
+                {
+                    _col++;
+                    _y = _colTop;
+                }
+                else if (columnHasRows || (_col == 0 && _pageHasBody))
+                {
+                    RestoreVariables(before);
+                    NewPage();
+                    Accumulate(row, scope);
+                    items = Evaluate(band, row, scope, out height);
+                    _inRun = true; _col = 0; _colTop = _y; _runBottom = _y;
+                }
+            }
+            ShiftToColumn(items, _col);
+            Emit(band, items);
+            _y += height;
+            _runBottom = Math.Max(_runBottom, _y);
+            _pageHasBody = true;
+            _footerRow = row;
+        }
+
+        /// <summary>One line of detail rows in "across" order: the rows go left to right in their columns and the line is as high as its tallest row.</summary>
+        private void RenderAcrossLine(List<Row> rows, int start, int count)
+        {
+            var band = _def.Detail;
+            var before = SnapshotVariables();
+            int rowNumber = _rowNumber;
+
+            List<List<RenderedItem>> Collect(out double lineHeight)
+            {
+                lineHeight = 0;
+                var collected = new List<List<RenderedItem>>();
+                for (int j = 0; j < count; j++)
+                {
+                    var row = rows[start + j];
+                    _currentRow = row;
+                    _rowNumber++;
+                    Accumulate(row, rows);
+                    collected.Add(Evaluate(band, row, rows, out double h));
+                    lineHeight = Math.Max(lineHeight, Math.Max(0, h));
+                }
+                return collected;
+            }
+
+            var cells = Collect(out double height);
+            if (height <= 0 && cells.All(c => c.Count == 0)) return;
+
+            if (_y + height > BodyBottom && _pageHasBody)
+            {
+                RestoreVariables(before);
+                _rowNumber = rowNumber;
+                NewPage();
+                cells = Collect(out height);
+            }
+            for (int j = 0; j < cells.Count; j++)
+            {
+                ShiftToColumn(cells[j], j);
+                Emit(band, cells[j]);
+            }
+            _y += height;
+            _pageHasBody = true;
+            _footerRow = rows[start + count - 1];
         }
 
         /// <summary>Renders a header/footer band at the current Y without page-break logic.</summary>
@@ -671,7 +900,7 @@ public static class ReportEngine
                 var r = new RenderedItem
                 {
                     Kind = item.Kind,
-                    X = _def.Page.MarginLeft + item.X,
+                    X = _ps.MarginLeft + item.X,
                     Y = item.Y,
                     Width = item.Width,
                     Height = item.Height,
@@ -1004,6 +1233,7 @@ public static class ReportEngine
             {
                 Culture = _opt.Culture, BaseDirectory = _opt.BaseDirectory, Measurer = _opt.Measurer, Now = _now,
                 SubReports = _opt.SubReports, DataSets = _opt.DataSets, SubReportDepth = _opt.SubReportDepth + 1,
+                SourceRoot = _opt.SourceRoot, AllowNetworkPaths = _opt.AllowNetworkPaths,
                 Rows = childRows
             };
 
@@ -1310,7 +1540,8 @@ public static class ReportEngine
             TotalPages = _sectionTotals != null && _sectionTotals.TryGetValue(_section, out var total) ? total : _sectionPage,
             RowNumber = _rowNumber,
             Now = _now,
-            Culture = _opt.Culture
+            Culture = _opt.Culture,
+            DataSets = _opt.Catalog
         };
 
         private void Warn(string message)

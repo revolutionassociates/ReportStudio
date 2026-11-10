@@ -21,28 +21,35 @@ public static class DataLoader
     /// <summary>Set by ReportStudio.Data (DatabaseLoader.Register). Stays null when only Core is referenced.</summary>
     public static IDatabaseLoader? Database { get; set; }
 
-    public static List<Row> Load(DataSourceDefinition ds, IReadOnlyDictionary<string, object?> parameters)
+    public static List<Row> Load(DataSourceDefinition ds, IReadOnlyDictionary<string, object?> parameters, Sources.SourceSettings? sources = null)
     {
         if (ds.Provider == DbProvider.Sample) return SampleData.Generate();
         if (ds.Provider == DbProvider.Host)
             throw new InvalidOperationException("The Host data source has no database; the host supplies the rows.");
+        if (ds.Provider.IsFile()) return Sources.FileSourceLoader.Load(ds, sources ?? new Sources.SourceSettings());
+        if (ds.Provider.IsWeb())
+            throw new Sources.SourceException("REST and OData sources are not available in this build.");
         if (string.IsNullOrWhiteSpace(ds.Query)) return new List<Row>();
         return Require(ds).Load(ds, parameters);
     }
 
     /// <summary>Column names the query returns (used by the designer's field explorer). No data is read.</summary>
-    public static List<string> GetFieldNames(DataSourceDefinition ds)
+    public static List<string> GetFieldNames(DataSourceDefinition ds, Sources.SourceSettings? sources = null)
     {
         if (ds.Provider == DbProvider.Sample) return SampleData.FieldNames.ToList();
+        if (ds.Provider.IsFile() && !string.IsNullOrWhiteSpace(ds.Source)) return Sources.FileSourceLoader.GetFieldNames(ds, sources ?? new Sources.SourceSettings());
+        if (ds.Provider.IsFile() || ds.Provider.IsWeb()) return ds.Fields.Select(f => f.Name).ToList();
         // Host reports (and database reports without a query) use the schema stored in the file: no database needed.
         if (ds.Provider == DbProvider.Host || string.IsNullOrWhiteSpace(ds.Query))
             return ds.Fields.Select(f => f.Name).ToList();
         return Require(ds).GetFieldNames(ds);
     }
 
-    public static void TestConnection(DataSourceDefinition ds)
+    public static void TestConnection(DataSourceDefinition ds, Sources.SourceSettings? sources = null)
     {
         if (ds.Provider is DbProvider.Sample or DbProvider.Host) return;
+        if (ds.Provider.IsFile()) { Sources.FileSourceLoader.Test(ds, sources ?? new Sources.SourceSettings()); return; }
+        if (ds.Provider.IsWeb()) return;
         Require(ds).TestConnection(ds);
     }
 

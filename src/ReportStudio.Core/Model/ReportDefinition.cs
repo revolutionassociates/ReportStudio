@@ -23,6 +23,12 @@ public class ReportDefinition
     public PageBackgroundSettings Background { get; set; } = new();
 
     public DataSourceDefinition DataSource { get; set; } = new();
+
+    /// <summary>Further named sets of rows (requirement 39), read with Lookup, LookupSum, LookupCount and LookupList or joined onto the main rows.</summary>
+    public List<DataSetDefinition> DataSets { get; set; } = new();
+
+    /// <summary>Data sets whose fields are added to the main rows before the report filters, sorts and groups them; applied in this order.</summary>
+    public List<JoinDefinition> Joins { get; set; } = new();
     public List<ReportParameter> Parameters { get; set; } = new();
     public List<GroupDefinition> Groups { get; set; } = new();
 
@@ -47,8 +53,9 @@ public class ReportDefinition
     /// <summary>True when running this report would execute a query taken from the file (needs the user's trust).</summary>
     [JsonIgnore]
     public bool HasOwnQuery =>
-        DataSource.Provider is not (DbProvider.Sample or DbProvider.Host) &&
-        (!string.IsNullOrWhiteSpace(DataSource.Query) || Parameters.Any(p => !string.IsNullOrWhiteSpace(p.ChoicesQuery)));
+        DataSource.ReadsExternalData
+        || (DataSource.Provider.IsDatabase() && Parameters.Any(p => !string.IsNullOrWhiteSpace(p.ChoicesQuery)))
+        || DataSets.Any(d => d.DataSource.ReadsExternalData);
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -96,12 +103,20 @@ public class ReportDefinition
     /// <summary>Makes Kind values and names consistent after loading or editing.</summary>
     public void Normalize()
     {
+        DataSets ??= new();
+        Joins ??= new();
+        DataSets.RemoveAll(d => d == null);
+        Joins.RemoveAll(j => j == null);
+        foreach (var d in DataSets) d.Normalize();
+        foreach (var j in Joins) j.Normalize();
+
         // Host reports get their rows from the host application: whatever query or connection string a file
         // carries is ignored (and therefore dropped), so a crafted file can never make the host open a connection.
         if (DataSource.Provider == DbProvider.Host)
         {
             DataSource.Query = "";
             DataSource.ConnectionString = "";
+            DataSource.Source = "";
         }
 
         Watermark ??= new WatermarkSettings();      // a file may carry "Watermark": null
@@ -133,6 +148,8 @@ public class ReportDefinition
     }
 }
 
+public enum ColumnOrder { Down, Across }
+
 public class PageSettings
 {
     public double Width { get; set; } = 794;   // A4 portrait @96dpi
@@ -142,8 +159,39 @@ public class PageSettings
     public double MarginTop { get; set; } = 40;
     public double MarginBottom { get; set; } = 40;
 
+    /// <summary>Most columns a page can have.</summary>
+    public const int MaxColumns = 12;
+
+    /// <summary>Columns of detail rows on a page (1 = the usual single column). Group headers and footers, the report header and footer and the page header and footer stay full width.</summary>
+    public int Columns { get; set; } = 1;
+
+    /// <summary>Space between two columns, in report pixels.</summary>
+    public double ColumnGap { get; set; } = 20;
+
+    /// <summary>Down: a column is filled to the bottom of the page before the next one starts (a phone book). Across: rows go left to right, then the next line (address labels).</summary>
+    public ColumnOrder ColumnOrder { get; set; } = ColumnOrder.Down;
+
     [JsonIgnore] public double ContentWidth => Width - MarginLeft - MarginRight;
     [JsonIgnore] public bool IsLandscape => Width > Height;
+
+    /// <summary>The number of columns, kept between 1 and <see cref="MaxColumns"/>.</summary>
+    [JsonIgnore] public int ColumnCount => Math.Clamp(Columns, 1, MaxColumns);
+
+    [JsonIgnore] private double Gap => Math.Max(0, ColumnGap);
+
+    /// <summary>The width of one column: the page's content width less the gaps, shared equally.</summary>
+    [JsonIgnore] public double ColumnWidth => Math.Max(1, (ContentWidth - Gap * (ColumnCount - 1)) / ColumnCount);
+
+    /// <summary>A copy of these settings with another page size (everything else, margins and columns included, is kept).</summary>
+    public PageSettings WithSize(double width, double height) => new()
+    {
+        Width = width, Height = height,
+        MarginLeft = MarginLeft, MarginRight = MarginRight, MarginTop = MarginTop, MarginBottom = MarginBottom,
+        Columns = Columns, ColumnGap = ColumnGap, ColumnOrder = ColumnOrder
+    };
+
+    /// <summary>Where a column starts, counted from the left margin.</summary>
+    public double ColumnLeft(int column) => Math.Clamp(column, 0, ColumnCount - 1) * (ColumnWidth + Gap);
 
     public void SetA4(bool landscape)
     {
@@ -253,6 +301,22 @@ public class GroupDefinition
     /// <summary>Expression whose value changes between groups, e.g. "Country".</summary>
     public string Expression { get; set; } = "";
     public bool StartNewPage { get; set; }
+
+    /// <summary>
+    /// The page size (report pixels, 96 per inch) of the pages this group starts, for a group that starts a new page: an appendix in landscape,
+    /// a wide table on A3. 0 = no change: an outermost group goes back to the report's own page size, an inner group keeps the size its
+    /// outer group set. The margins and columns stay the report's. Ignored for a group that does not start a new page.
+    /// </summary>
+    public double PageWidth { get; set; }
+
+    /// <summary>See <see cref="PageWidth"/>.</summary>
+    public double PageHeight { get; set; }
+
+    /// <summary>
+    /// Makes the page size above depend on the group: an expression worked out over the group's first row, such as <c>Section == 'Appendix'</c>.
+    /// The size applies to the pages of the groups for which it is true; the others get the usual page. Empty = it applies to every group.
+    /// </summary>
+    public string PageSizeWhen { get; set; } = "";
 
     /// <summary>
     /// Each instance of this group starts on a new page and restarts page numbering, so {Page} and {PageCount}
@@ -387,7 +451,34 @@ public class ReportParameter
 /// Host = the application embedding the engine supplies the rows itself; the report carries no query
 /// and no connection string. New values are appended so existing files keep their meaning.
 /// </summary>
-public enum DbProvider { Sample, SqlServer, MySql, PostgreSql, Host }
+public enum DbProvider
+{
+    Sample, SqlServer, MySql, PostgreSql, Host,
+    /// <summary>A JSON file (requirement 40).</summary>
+    Json,
+    /// <summary>An XML file.</summary>
+    Xml,
+    /// <summary>A delimited text file (comma, semicolon, tab or pipe).</summary>
+    Csv,
+    /// <summary>An Excel workbook (.xlsx).</summary>
+    Excel,
+    /// <summary>A web service that returns JSON (HTTP GET).</summary>
+    Rest,
+    /// <summary>An OData service (JSON; follows paging links).</summary>
+    OData
+}
+
+public static class DbProviderExtensions
+{
+    /// <summary>SQL Server, MySQL, PostgreSQL: read by the registered database loader.</summary>
+    public static bool IsDatabase(this DbProvider p) => p is DbProvider.SqlServer or DbProvider.MySql or DbProvider.PostgreSql;
+
+    /// <summary>JSON, XML, CSV, Excel: read from a file on disk.</summary>
+    public static bool IsFile(this DbProvider p) => p is DbProvider.Json or DbProvider.Xml or DbProvider.Csv or DbProvider.Excel;
+
+    /// <summary>REST and OData: read over HTTP.</summary>
+    public static bool IsWeb(this DbProvider p) => p is DbProvider.Rest or DbProvider.OData;
+}
 
 public enum FieldType { Text, Number, Date, Boolean }
 
@@ -431,6 +522,53 @@ public class DataSourceDefinition
     /// <summary>SQL text. Report parameters are referenced as @ParamName and bound as real DB parameters.</summary>
     public string Query { get; set; } = "";
     public int CommandTimeoutSeconds { get; set; } = 60;
+
+    // ---- file and web sources (requirement 40) ----
+
+    /// <summary>The file (JSON, XML, CSV, Excel; relative to the report's folder) or the web address (REST, OData) the rows are read from.</summary>
+    public string Source { get; set; } = "";
+
+    /// <summary>
+    /// Where the rows are inside the document. JSON: a path such as <c>data.items</c> or <c>$.orders[0].lines</c> (empty = the document itself);
+    /// XML: element names such as <c>orders/order</c>, or <c>//order</c> for every element of that name (empty = the root's children);
+    /// Excel: the sheet name (empty = the first sheet); CSV: not used.
+    /// </summary>
+    public string Selector { get; set; } = "";
+
+    /// <summary>CSV: the separator, one character or "\t" for a tab. Empty = worked out from the first line.</summary>
+    public string Delimiter { get; set; } = "";
+
+    /// <summary>CSV and Excel: the first row holds the field names. Without it the fields are Column1, Column2, ...</summary>
+    public bool HasHeaderRow { get; set; } = true;
+
+    /// <summary>
+    /// True when running this source reads something outside the report: a database query, a file, a web address.
+    /// Such a report asks for trust when it comes from a file.
+    /// </summary>
+    [JsonIgnore]
+    public bool ReadsExternalData =>
+        Provider.IsDatabase() ? !string.IsNullOrWhiteSpace(Query) :
+        Provider.IsFile() || Provider.IsWeb() ? !string.IsNullOrWhiteSpace(Source) : false;
+
+    /// <summary>What is read, for the trust prompt: the query for a database, the address or file for the others (secrets in an address hidden).</summary>
+    public string DescribeForTrust(int maxChars)
+    {
+        string text = Provider.IsDatabase() ? $"{Provider}, {MaskedConnectionString}:\n{Query.Trim()}"
+            : $"{Provider}: {MaskedSource}" + (string.IsNullOrWhiteSpace(Selector) ? "" : $"\nSelect: {Selector.Trim()}");
+        return text.Length > maxChars ? text[..maxChars] + " …" : text;
+    }
+
+    /// <summary>The source with secrets hidden: a user name and password in a web address, and values of parameters called key, token, secret, password and the like.</summary>
+    [JsonIgnore]
+    public string MaskedSource
+    {
+        get
+        {
+            var text = System.Text.RegularExpressions.Regex.Replace(Source ?? "", @"(?i)//[^/@\s]+@", "//***@");
+            return System.Text.RegularExpressions.Regex.Replace(text,
+                @"(?i)([?&;](?:[\w-]*(?:key|token|secret|password|pwd|sig|signature|auth)[\w-]*)=)[^&;#\s]*", "$1***");
+        }
+    }
 
     /// <summary>
     /// Field names and types the report expects. Lets the designer's field list work without a database

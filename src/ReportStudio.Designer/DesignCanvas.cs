@@ -245,12 +245,16 @@ public sealed class DesignCanvas : Control
         return item;
     }
 
+    /// <summary>How far to the right an element may reach in a band: one column's width in the Details band of a multi-column page, the full width elsewhere.</summary>
+    private double ColumnLimit(Band? band) =>
+        band != null && ReferenceEquals(band, _def.Detail) && _def.Page.ColumnCount > 1 ? _def.Page.ColumnWidth : _def.Page.ContentWidth;
+
     /// <summary>Adds a field expression such as {Customer} to a band (the Detail band by default).</summary>
     public ReportItem AddField(string field, Band? band = null)
     {
         band ??= SelectedBand ?? _def.Detail;
         double x = band.Items.Count == 0 ? 0 : band.Items.Max(i => i.Right) + 6;
-        if (x > _def.Page.ContentWidth - 100) x = 0;
+        if (x > ColumnLimit(band) - 100) x = 0;
         return AddItem(ItemKind.Text, band, x, 1, 100, Math.Max(16, band.Height - 2), "{" + field + "}");
     }
 
@@ -532,6 +536,20 @@ public sealed class DesignCanvas : Control
         using (var edge = new Pen(Color.FromArgb(120, 140, 175)) { DashStyle = DashStyle.Dash })
             g.DrawLine(edge, PageLeft, box.BodyBottom, PageLeft + pageW, box.BodyBottom);
 
+        // With several columns the Details band is one column wide: shade what lies outside it and mark the column's edge.
+        if (_def.Page.ColumnCount > 1 && box.Band.Kind == BandKind.Detail)
+        {
+            int columnRight = ContentLeft + (int)_def.Page.ColumnWidth;
+            int contentRight = PageLeft + pageW - (int)_def.Page.MarginRight;
+            if (columnRight < contentRight)
+            {
+                using var shade = new SolidBrush(Color.FromArgb(40, 120, 130, 150));
+                g.FillRectangle(shade, columnRight, box.BodyTop, contentRight - columnRight, box.BodyBottom - box.BodyTop);
+            }
+            using var edgePen = new Pen(Color.FromArgb(0, 120, 215)) { DashStyle = DashStyle.Dash };
+            g.DrawLine(edgePen, columnRight, box.BodyTop, columnRight, box.BodyBottom);
+        }
+
         foreach (var item in box.Band.Items)
             DrawItem(g, item, box);
     }
@@ -748,7 +766,7 @@ public sealed class DesignCanvas : Control
                     var homeBand = _origBand.TryGetValue(it, out var hb) ? hb : null;
                     var homeBox = homeBand == null ? null : BoxOf(homeBand);
 
-                    double maxX = Math.Max(0, _def.Page.ContentWidth - it.Width);
+                    double maxX = Math.Max(0, ColumnLimit(dest ?? current) - it.Width);
                     it.X = Math.Clamp(Snap(o.X + dx), 0, maxX);
 
                     if (dest == null || destBox == null || homeBox == null)

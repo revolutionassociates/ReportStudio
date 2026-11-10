@@ -28,6 +28,8 @@ public sealed class ReportSettingsDialog : Form
     // others
     private readonly DataGridView _params = NewGrid();
     private readonly DataGridView _groups = NewGrid();
+    private readonly DataGridView _dataSets = NewGrid();
+    private readonly DataGridView _joins = NewGrid();
     private readonly TextBox _sort = new() { Multiline = true, Dock = DockStyle.Fill, ScrollBars = ScrollBars.Vertical };
     private readonly DataGridView _vars = NewGrid();
     private readonly TextBox _filter = new() { Dock = DockStyle.Top, Font = new Font("Consolas", 10f) };
@@ -35,6 +37,14 @@ public sealed class ReportSettingsDialog : Form
     private readonly TextBox _name = new() { Width = 300 };
     private readonly ComboBox _pageSize = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 220 };
     private readonly NumericUpDown _mL = NewMargin(), _mR = NewMargin(), _mT = NewMargin(), _mB = NewMargin();
+
+    // columns and label sheets
+    private readonly NumericUpDown _columns = new() { Minimum = 1, Maximum = PageSettings.MaxColumns, Width = 80 };
+    private readonly NumericUpDown _columnGap = new() { Minimum = 0, Maximum = 400, DecimalPlaces = 1, Width = 80 };
+    private readonly ComboBox _columnOrder = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 300 };
+    private readonly ComboBox _labelSheet = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 380 };
+    private readonly Label _columnInfo = new() { AutoSize = true, ForeColor = SystemColors.GrayText, MaximumSize = new Size(480, 0) };
+    private LabelPreset? _pendingLabelSheet;     // chosen in this dialog, applied to the Details band and the empty bands on OK
 
     // page look: background
     private readonly TextBox _bgColor = new() { Width = 100 };
@@ -51,6 +61,16 @@ public sealed class ReportSettingsDialog : Form
     private string _wmImage = "";                       // base64 of the chosen watermark picture; "" = none
     private readonly Label _wmPictureName = new() { AutoSize = true, Padding = new Padding(0, 6, 0, 0), Text = "(none)" };
     private readonly NumericUpDown _wmPictureSize = new() { Minimum = 5, Maximum = 100, Width = 80 };
+
+    private const string SameAsReport = "(report / outer group)";
+    private const string CustomPage = "(custom size, kept)";
+
+    private static string GroupPageLabel(GroupDefinition g)
+    {
+        if (g.PageWidth <= 0 || g.PageHeight <= 0) return SameAsReport;
+        int at = Array.FindIndex(PageSizes, p => Math.Abs(p.W - g.PageWidth) < 2 && Math.Abs(p.H - g.PageHeight) < 2);
+        return at >= 0 ? PageSizes[at].Label : CustomPage;
+    }
 
     private static readonly (string Label, double W, double H)[] PageSizes =
     {
@@ -75,6 +95,7 @@ public sealed class ReportSettingsDialog : Form
         tabs.TabPages.Add(BuildDataTab());
         tabs.TabPages.Add(BuildParametersTab());
         tabs.TabPages.Add(BuildGroupsTab());
+        tabs.TabPages.Add(BuildDataSetsTab());
         tabs.TabPages.Add(BuildVariablesTab());
 
         var ok = new Button { Text = "OK", Width = 90 };
@@ -111,6 +132,21 @@ public sealed class ReportSettingsDialog : Form
         AddRow(t, "Margin right (px)", _mR);
         AddRow(t, "Margin top (px)", _mT);
         AddRow(t, "Margin bottom (px)", _mB);
+
+        _columnOrder.Items.AddRange(new object[] { "Down - fill a column, then the next (lists)", "Across - left to right, then the next line (labels)" });
+        _labelSheet.Items.Add("(none)");
+        _labelSheet.Items.AddRange(LabelPreset.All.Select(p => (object)p.Name).ToArray());
+        _labelSheet.SelectedIndex = 0;
+        AddRow(t, "Columns", _columns);
+        AddRow(t, "Column gap (px)", _columnGap);
+        AddRow(t, "Column order", _columnOrder);
+        AddRow(t, "Label sheet", _labelSheet);
+        AddRow(t, "", _columnInfo);
+
+        foreach (var n in new[] { _mL, _mR, _columns, _columnGap }) n.ValueChanged += (_, _) => UpdateColumnInfo();
+        _pageSize.SelectedIndexChanged += (_, _) => UpdateColumnInfo();
+        _labelSheet.SelectedIndexChanged += (_, _) => ChooseLabelSheet();
+
         page.Controls.Add(t);
         return page;
     }
@@ -231,6 +267,45 @@ public sealed class ReportSettingsDialog : Form
         return page;
     }
 
+    /// <summary>Other data sets of the report (read with Lookup... functions) and the joins that add their fields to the main rows (requirement 39).</summary>
+    private TabPage BuildDataSetsTab()
+    {
+        var page = new TabPage("Data sets && joins") { Padding = new Padding(8) };
+
+        _dataSets.Columns.Add("SetName", "Name (used in Lookup and joins)");
+        var provider = new DataGridViewComboBoxColumn { Name = "SetProvider", HeaderText = "Source", FlatStyle = FlatStyle.Flat };
+        provider.Items.AddRange(Enum.GetNames<DbProvider>().Cast<object>().ToArray());
+        _dataSets.Columns.Add(provider);
+        _dataSets.Columns.Add("SetConnection", "Connection string (database sources)");
+        _dataSets.Columns.Add("SetQuery", "Query (database sources; @Parameter works)");
+
+        var setBox = new GroupBox
+        {
+            Text = "Data sets. Host = the application supplies the rows under this name. Sample = the built-in sample rows.",
+            Dock = DockStyle.Top, Height = 200
+        };
+        setBox.Controls.Add(_dataSets);
+
+        _joins.Columns.Add("JoinSet", "Join data set");
+        _joins.Columns.Add("JoinLeft", "Field of the report's rows");
+        _joins.Columns.Add("JoinRight", "Field of the data set (empty = same)");
+        var kind = new DataGridViewComboBoxColumn { Name = "JoinKind", HeaderText = "Kind", FlatStyle = FlatStyle.Flat };
+        kind.Items.AddRange(Enum.GetNames<JoinKind>().Cast<object>().ToArray());
+        _joins.Columns.Add(kind);
+        _joins.Columns.Add("JoinPrefix", "Prefix for its fields (e.g. Dept_)");
+
+        var joinBox = new GroupBox
+        {
+            Text = "Joins, applied in this order before the report filters, sorts and groups. Left keeps every row; Inner drops rows with no match; several matches give several rows.",
+            Dock = DockStyle.Fill
+        };
+        joinBox.Controls.Add(_joins);
+
+        page.Controls.Add(joinBox);
+        page.Controls.Add(setBox);
+        return page;
+    }
+
     private TabPage BuildGroupsTab()
     {
         var page = new TabPage("Grouping && sort") { Padding = new Padding(8) };
@@ -239,6 +314,12 @@ public sealed class ReportSettingsDialog : Form
         _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "RestartPages", HeaderText = "Restart page numbers" });
         _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "Collapsible", HeaderText = "Drill-down: click header to open/close" });
         _groups.Columns.Add(new DataGridViewCheckBoxColumn { Name = "StartCollapsed", HeaderText = "Start closed" });
+        var pageColumn = new DataGridViewComboBoxColumn { Name = "GroupPage", HeaderText = "Page size of its pages (needs a new page)", FlatStyle = FlatStyle.Flat };
+        pageColumn.Items.Add(SameAsReport);
+        pageColumn.Items.AddRange(PageSizes.Select(p => (object)p.Label).ToArray());
+        pageColumn.Items.Add(CustomPage);
+        _groups.Columns.Add(pageColumn);
+        _groups.Columns.Add("PageWhen", "Page size only when (expression, empty = always)");
 
         var groupBox = new GroupBox
         {
@@ -377,6 +458,10 @@ public sealed class ReportSettingsDialog : Form
         _mR.Value = Clamp(_def.Page.MarginRight);
         _mT.Value = Clamp(_def.Page.MarginTop);
         _mB.Value = Clamp(_def.Page.MarginBottom);
+        _columns.Value = Math.Clamp(_def.Page.ColumnCount, 1, PageSettings.MaxColumns);
+        _columnGap.Value = Clamp(_def.Page.ColumnGap);
+        _columnOrder.SelectedIndex = _def.Page.ColumnOrder == ColumnOrder.Across ? 1 : 0;
+        UpdateColumnInfo();
 
         _bgColor.Text = _def.Background.Color;
         _bgGradient.Text = _def.Background.GradientColor;
@@ -401,13 +486,50 @@ public sealed class ReportSettingsDialog : Form
         _fields.Text = string.Join(Environment.NewLine, _def.DataSource.Fields.Select(f => f.ToString()));
 
         foreach (var p in _def.Parameters) _params.Rows.Add(p.Name, p.Prompt, p.Type, p.DefaultValue, p.Choices, p.ChoicesQuery, p.DependsOn, p.MultiValue);
-        foreach (var g in _def.Groups) _groups.Rows.Add(g.Expression, g.StartNewPage, g.RestartPageNumbers, g.Collapsible, g.StartCollapsed);
+        foreach (var d in _def.DataSets)
+            _dataSets.Rows.Add(d.Name, d.DataSource.Provider.ToString(), d.DataSource.ConnectionString, d.DataSource.Query);
+        foreach (var j in _def.Joins)
+            _joins.Rows.Add(j.DataSet, j.LeftField, j.RightField, j.Kind.ToString(), j.Prefix);
+        foreach (var g in _def.Groups) _groups.Rows.Add(g.Expression, g.StartNewPage, g.RestartPageNumbers, g.Collapsible, g.StartCollapsed, GroupPageLabel(g), g.PageSizeWhen);
         _sort.Text = string.Join(Environment.NewLine, _def.SortBy);
 
         _filter.Text = _def.Filter;
         ShowFilterStatus();
         foreach (var v in _def.Variables)
             _vars.Rows.Add(v.Name, v.Function, v.Expression, v.Condition, v.Initial, v.Reset, v.ResetGroup);
+    }
+
+    /// <summary>Tells how wide one column is, since the Details band has to be designed for that width.</summary>
+    private void UpdateColumnInfo()
+    {
+        var size = PageSizes[Math.Max(0, _pageSize.SelectedIndex)];
+        int columns = (int)_columns.Value;
+        double content = size.W - (double)_mL.Value - (double)_mR.Value;
+        double width = Math.Max(1, (content - (double)_columnGap.Value * (columns - 1)) / columns);
+        _columnInfo.Text = columns < 2
+            ? "One column: the Details band uses the whole width between the margins."
+            : $"Each column is {width:0.#} px wide. Design the Details band for that width; group headers and footers keep the full width.";
+    }
+
+    /// <summary>A label sheet fills in the page, margins and columns; the Details band is set to one label high when OK is pressed.</summary>
+    private void ChooseLabelSheet()
+    {
+        if (_labelSheet.SelectedIndex <= 0) { _pendingLabelSheet = null; return; }
+        var preset = LabelPreset.All[_labelSheet.SelectedIndex - 1];
+        var scratch = new ReportDefinition();
+        preset.ApplyTo(scratch);
+
+        int sizeIndex = Array.FindIndex(PageSizes, p => Math.Abs(p.W - scratch.Page.Width) < 2 && Math.Abs(p.H - scratch.Page.Height) < 2);
+        if (sizeIndex >= 0) _pageSize.SelectedIndex = sizeIndex;
+        _mL.Value = Clamp(scratch.Page.MarginLeft);
+        _mR.Value = Clamp(scratch.Page.MarginRight);
+        _mT.Value = Clamp(scratch.Page.MarginTop);
+        _mB.Value = Clamp(scratch.Page.MarginBottom);
+        _columns.Value = scratch.Page.ColumnCount;
+        _columnGap.Value = Clamp(scratch.Page.ColumnGap);
+        _columnOrder.SelectedIndex = 1;
+        _pendingLabelSheet = preset;
+        UpdateColumnInfo();
     }
 
     private static decimal Clamp(double v) => (decimal)Math.Clamp(v, 0, 400);
@@ -498,6 +620,16 @@ public sealed class ReportSettingsDialog : Form
         _def.Page.MarginRight = (double)_mR.Value;
         _def.Page.MarginTop = (double)_mT.Value;
         _def.Page.MarginBottom = (double)_mB.Value;
+        _def.Page.Columns = (int)_columns.Value;
+        _def.Page.ColumnGap = (double)_columnGap.Value;
+        _def.Page.ColumnOrder = _columnOrder.SelectedIndex == 1 ? ColumnOrder.Across : ColumnOrder.Down;
+        if (_pendingLabelSheet != null)
+        {
+            // The page values above are the sheet's own; the rows of a label are one label high and a sheet has no header or footer unless one has elements.
+            _def.Detail.Height = LabelPreset.ToPixels(_pendingLabelSheet.LabelHeightMm);
+            foreach (var band in new[] { _def.ReportHeader, _def.PageHeader, _def.PageFooter, _def.ReportFooter })
+                if (band.Items.Count == 0) band.Height = 0;
+        }
 
         _def.DataSource.Provider = (DbProvider)Math.Max(0, _provider.SelectedIndex);
         bool host = _def.DataSource.Provider == DbProvider.Host;
@@ -520,9 +652,35 @@ public sealed class ReportSettingsDialog : Form
             g.RestartPageNumbers = rows[i].Cells[2].Value is true;
             g.Collapsible = rows[i].Cells[3].Value is true;
             g.StartCollapsed = rows[i].Cells[4].Value is true;
+            var chosen = Convert.ToString(rows[i].Cells[5].Value) ?? SameAsReport;
+            var size = Array.FindIndex(PageSizes, p => p.Label == chosen);
+            if (size >= 0) { g.PageWidth = PageSizes[size].W; g.PageHeight = PageSizes[size].H; }
+            else if (chosen != CustomPage) { g.PageWidth = 0; g.PageHeight = 0; }      // custom: keep what the file has
+            g.PageSizeWhen = (Convert.ToString(rows[i].Cells[6].Value) ?? "").Trim();
             groups.Add(g);
         }
         _def.Groups = groups;
+
+        string Text(DataGridViewRow row, int cell) => (Convert.ToString(row.Cells[cell].Value) ?? "").Trim();
+        _def.DataSets = _dataSets.Rows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow && Text(r, 0).Length > 0)
+            .Select(r => new DataSetDefinition
+            {
+                Name = Text(r, 0),
+                DataSource = new DataSourceDefinition
+                {
+                    Provider = Enum.TryParse<DbProvider>(Text(r, 1), out var parsedProvider) ? parsedProvider : DbProvider.Host,
+                    ConnectionString = Text(r, 2),
+                    Query = Text(r, 3)
+                }
+            }).ToList();
+        _def.Joins = _joins.Rows.Cast<DataGridViewRow>()
+            .Where(r => !r.IsNewRow && Text(r, 0).Length > 0)
+            .Select(r => new JoinDefinition
+            {
+                DataSet = Text(r, 0), LeftField = Text(r, 1), RightField = Text(r, 2),
+                Kind = Enum.TryParse<JoinKind>(Text(r, 3), out var parsedKind) ? parsedKind : JoinKind.Left, Prefix = Text(r, 4)
+            }).ToList();
         _def.SortBy = _sort.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
         _def.Normalize();
         return true;
@@ -609,5 +767,5 @@ public sealed class ReportSettingsDialog : Form
         BackgroundColor = SystemColors.Window, BorderStyle = BorderStyle.FixedSingle
     };
 
-    private static NumericUpDown NewMargin() => new() { Minimum = 0, Maximum = 400, Width = 80 };
+    private static NumericUpDown NewMargin() => new() { Minimum = 0, Maximum = 400, DecimalPlaces = 1, Width = 80 };
 }

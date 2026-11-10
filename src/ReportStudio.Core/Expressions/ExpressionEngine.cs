@@ -28,10 +28,13 @@ public class EvalContext
     public DateTime Now { get; set; } = DateTime.Now;
     public CultureInfo Culture { get; set; } = CultureInfo.CurrentCulture;
 
+    /// <summary>The report's other data sets, for the Lookup functions (requirement 39). Null when the report has none.</summary>
+    public ReportStudio.Core.Data.DataSetCatalog? DataSets { get; set; }
+
     public EvalContext ForRow(IReadOnlyDictionary<string, object?> row) => new()
     {
         Row = row, Scope = Scope, Parameters = Parameters, Variables = Variables, Continued = Continued, PageNumber = PageNumber,
-        TotalPages = TotalPages, RowNumber = RowNumber, Now = Now, Culture = Culture
+        TotalPages = TotalPages, RowNumber = RowNumber, Now = Now, Culture = Culture, DataSets = DataSets
     };
 }
 
@@ -221,6 +224,50 @@ internal sealed class Call : Node
     private readonly List<Node> _args;
     public Call(string name, List<Node> args) { _name = name; _args = args; }
 
+    /// <summary>
+    /// Lookup(set, keyField, value, resultField) is the first match's field; LookupSum adds the field over all matches; LookupCount counts them
+    /// (no resultField); LookupList(set, keyField, value, resultField, separator) joins them as text. Nothing found: empty, 0, 0 and empty.
+    /// </summary>
+    private object? EvalLookup(string fn, EvalContext ctx)
+    {
+        bool counts = fn == "lookupcount";
+        int min = counts ? 3 : 4;
+        if (_args.Count < min || _args.Count > (fn == "lookuplist" ? 5 : min))
+            throw new ExpressionException(fn switch
+            {
+                "lookupcount" => "LookupCount needs a data set, a key field and a value: LookupCount('Leaves', 'EmpCode', EmpCode)",
+                "lookuplist" => "LookupList needs a data set, a key field, a value, a result field and optionally a separator: LookupList('Leaves', 'EmpCode', EmpCode, 'Type', '; ')",
+                "lookupsum" => "LookupSum needs a data set, a key field, a value and a result field: LookupSum('Leaves', 'EmpCode', EmpCode, 'Days')",
+                _ => "Lookup needs a data set, a key field, a value and a result field: Lookup('Dept', 'Code', DeptCode, 'Name')"
+            });
+
+        string Text(int i) => Expr.Format(_args[i].Eval(ctx), null, ctx.Culture).Trim();
+        var set = Text(0);
+        var catalog = ctx.DataSets;
+        if (catalog == null || !catalog.Contains(set))
+            throw new ExpressionException($"There is no data set '{set}'. Add it under Report settings > Data sets, or supply it from the host.");
+
+        var matches = catalog.Matches(set, Text(1), _args[2].Eval(ctx));
+        if (counts) return (decimal)matches.Count;
+
+        var field = Text(3);
+        object? Value(IReadOnlyDictionary<string, object?> row)
+        {
+            if (row.TryGetValue(field, out var v)) return Expr.Normalize(v);
+            foreach (var (name, value) in row)
+                if (string.Equals(name, field, StringComparison.OrdinalIgnoreCase)) return Expr.Normalize(value);
+            return null;
+        }
+        switch (fn)
+        {
+            case "lookup": return matches.Count == 0 ? null : Value(matches[0]);
+            case "lookupsum": return matches.Aggregate(0m, (sum, row) => sum + (Value(row) == null ? 0m : Expr.ToNumber(Value(row))));
+            default:
+                var separator = _args.Count > 4 ? Expr.Format(_args[4].Eval(ctx), null, ctx.Culture) : ", ";
+                return string.Join(separator, matches.Select(Value).Where(v => v != null).Select(v => Expr.Format(v, null, ctx.Culture)));
+        }
+    }
+
     public override object? Eval(EvalContext ctx)
     {
         var fn = _name.ToLowerInvariant();
@@ -248,6 +295,8 @@ internal sealed class Call : Node
                 Need(3);
                 return Expr.IsTrue(_args[0].Eval(ctx)) ? _args[1].Eval(ctx) : _args[2].Eval(ctx);
             case "isnull": Need(2); return _args[0].Eval(ctx) ?? _args[1].Eval(ctx);
+            case "lookup": case "lookupsum": case "lookupcount": case "lookuplist":
+                return EvalLookup(fn, ctx);
         }
 
         var a = _args.Select(x => x.Eval(ctx)).ToList();

@@ -18,7 +18,7 @@ public static class ParameterChoiceLoader
         IReadOnlyDictionary<string, object?> parameters)
     {
         var ds = definition.DataSource;
-        if (string.IsNullOrWhiteSpace(parameter.ChoicesQuery) || ds.Provider is DbProvider.Sample or DbProvider.Host)
+        if (string.IsNullOrWhiteSpace(parameter.ChoicesQuery) || !ds.Provider.IsDatabase())
             return ParameterChoices.Parse(parameter.Choices);
 
         var query = new DataSourceDefinition

@@ -31,6 +31,17 @@ public static class PrintHelper
         int index = range ? Math.Max(0, doc.PrinterSettings.FromPage - 1) : 0;
         int last = range ? Math.Min(doc.PrinterSettings.ToPage, report.Pages.Count) : report.Pages.Count;
 
+        // Pages of different sizes or orientations (requirement 38): each page asks the printer for its own paper.
+        int queryIndex = index;
+        doc.QueryPageSettings += (_, e) =>
+        {
+            var next = report.Pages[Math.Min(queryIndex, report.Pages.Count - 1)];
+            e.PageSettings.Landscape = next.Width > next.Height;
+            e.PageSettings.PaperSize = new PaperSize(
+                "Report", (int)Math.Round(Math.Min(next.Width, next.Height) * 100 / 96.0),
+                (int)Math.Round(Math.Max(next.Width, next.Height) * 100 / 96.0));
+            queryIndex++;
+        };
         doc.PrintPage += (_, e) =>
         {
             var page = report.Pages[index];
