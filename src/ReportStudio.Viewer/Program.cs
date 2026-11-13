@@ -10,7 +10,10 @@ internal static class Program
     {
         ReportStudio.Data.DatabaseLoader.Register();
         ApplicationConfiguration.Initialize();
-        Application.Run(new ViewerForm(args.FirstOrDefault(a => File.Exists(a))));
+        // Reports may read data files or web addresses only when the person who starts the viewer says so.
+        bool files = args.Contains("--allow-data-files", StringComparer.OrdinalIgnoreCase);
+        bool web = args.Contains("--allow-web-data", StringComparer.OrdinalIgnoreCase);
+        Application.Run(new ViewerForm(args.FirstOrDefault(a => File.Exists(a)), files, web));
     }
 }
 
@@ -18,12 +21,17 @@ internal static class Program
 internal sealed class ViewerForm : Form
 {
     private readonly ViewerControl _viewer = new();
+    private readonly bool _allowFiles, _allowWeb;
     private ReportDefinition? _definition;
     private string? _path;
     private Dictionary<string, string?> _lastParameters = new();
 
-    public ViewerForm(string? initialFile)
+    public ViewerForm(string? initialFile, bool allowFileSources = false, bool allowWebSources = false)
     {
+        _allowFiles = allowFileSources;
+        _allowWeb = allowWebSources;
+        _viewer.AllowFileSources = allowFileSources;
+        _viewer.AllowWebSources = allowWebSources;
         Text = "ReportStudio Viewer";
         Width = 1000;
         Height = 800;
@@ -62,7 +70,7 @@ internal sealed class ViewerForm : Form
         try
         {
             var loaded = ReportDefinition.Load(path);
-            if (!UntrustedFileGuard.Confirm(this, loaded, path)) return;
+            if (!UntrustedFileGuard.Confirm(this, loaded, path, _allowFiles, _allowWeb)) return;
             _definition = loaded;
             _path = path;
             _lastParameters = new Dictionary<string, string?>();

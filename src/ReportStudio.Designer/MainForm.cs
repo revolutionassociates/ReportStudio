@@ -14,13 +14,19 @@ internal sealed class MainForm : Form
     private readonly PropertyGrid _props = new() { Dock = DockStyle.Fill, HelpVisible = true, ToolbarVisible = true };
     private readonly ListBox _fields = new() { Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly TabControl _tabs = new() { Dock = DockStyle.Fill };
-    private readonly ViewerControl _viewer = new();
+    private readonly ViewerControl _viewer = new() { AllowFileSources = true, AllowWebSources = true };   // the author's own tool: the trust prompt still applies
     private readonly ToolStripStatusLabel _status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
     private readonly Dictionary<DesignTool, ToolStripButton> _toolButtons = new();
     private RulerControl[] _rulers = Array.Empty<RulerControl>();
 
     private ReportDefinition _def = SampleReport.Create();
     private string? _path;
+
+    /// <summary>The folder of the open report file (null for a report not yet saved): a data file named without a folder is looked up here.</summary>
+    private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
+
+    /// <summary>The folder of the open report file (null for a report not yet saved): a data file named without a folder is looked up here.</summary>
+    private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
     private bool _dirty;
     private bool _dbTrusted = true;
     private Dictionary<string, string?> _lastParameters = new();
@@ -394,7 +400,7 @@ internal sealed class MainForm : Form
         {
             if (_dbTrusted || !_def.HasOwnQuery)
             {
-                foreach (var f in DataLoader.GetFieldNames(_def.DataSource))
+                foreach (var f in DataLoader.GetFieldNames(_def.DataSource, new ReportStudio.Core.Data.Sources.SourceSettings { BaseDirectory = ReportFolder }))
                     _fields.Items.Add(f.Any(char.IsWhiteSpace) ? $"[{f}]" : f);
             }
             else _status.Text = "This file has its own query, so its fields were not loaded. Preview it and confirm to run it.";
@@ -449,9 +455,10 @@ internal sealed class MainForm : Form
 
     private void EditSettings()
     {
-        using var dlg = new ReportSettingsDialog(_def);
+        using var dlg = new ReportSettingsDialog(_def, ReportFolder);
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
         _dbTrusted = true;   // the user just wrote or reviewed the data source themselves
+        ViewerControl.ClearDataCache();   // the source may have changed: never show rows kept from the old settings
         SetLiveData(null);   // the data source may have changed: switch live data on again to reload
         _canvas.NotifyChanged();
         RefreshFields();
@@ -487,7 +494,7 @@ internal sealed class MainForm : Form
         try
         {
             Cursor = Cursors.WaitCursor;
-            SetLiveData(ReportStudio.Core.Layout.DesignPreview.Load(_def, _lastParameters));
+            SetLiveData(ReportStudio.Core.Layout.DesignPreview.Load(_def, _lastParameters, baseDirectory: ReportFolder));
         }
         catch (Exception ex)
         {
@@ -527,7 +534,7 @@ internal sealed class MainForm : Form
             if (dlg.ShowDialog(this) != DialogResult.OK) { _tabs.SelectedIndex = 0; return; }
             _lastParameters = dlg.Values;
         }
-        _viewer.Run(_def, _lastParameters, _path == null ? null : Path.GetDirectoryName(_path));
+        _viewer.Run(_def, _lastParameters, ReportFolder);
     }
 
     private void ShowHelp()

@@ -17,6 +17,9 @@ internal sealed class PdfFile
     /// <summary>The /Info dictionary (title and so on), or 0.</summary>
     public int Info { get; set; }
 
+    /// <summary>The PDF version in the header line (1.6; PDF/A-2 files say 1.7).</summary>
+    public string Version { get; set; } = "1.6";
+
     /// <summary>Reserves an object number; the value is filled in later with <see cref="Set"/>.</summary>
     public int Reserve()
     {
@@ -41,7 +44,7 @@ internal sealed class PdfFile
         var output = new PdfOutput(stream, encryption);
 
         // The second line holds bytes above 127 so file transfer tools treat the file as binary.
-        output.Write("%PDF-1.6\n");
+        output.Write("%PDF-" + Version + "\n");
         output.Write(new byte[] { (byte)'%', 0xE2, 0xE3, 0xCF, 0xD3, (byte)'\n' });
 
         var offsets = new long[_objects.Count + 1];

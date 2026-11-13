@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using ReportStudio.Core.Data;
+using ReportStudio.Core.Data.Sources;
 using ReportStudio.Core.Layout;
 using ReportStudio.Core.Model;
 using ReportStudio.Export;
@@ -24,6 +25,23 @@ public sealed class ReportSettingsDialog : Form
     {
         Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f)
     };
+
+    // data source: files and web addresses (requirement 40)
+    private readonly string? _baseDirectory;      // the report file's folder: a file named without a folder is looked up here
+    private readonly TextBox _source = new() { Dock = DockStyle.Fill };
+    private readonly Button _browse = new() { Text = "Browse...", AutoSize = true };
+    private readonly TextBox _selector = new() { Dock = DockStyle.Fill };
+    private readonly TextBox _delimiter = new() { Width = 60 };
+    private readonly CheckBox _hasHeader = new() { Text = "The first row holds the field names", AutoSize = true, Checked = true };
+    private readonly TextBox _headers = new()
+    {
+        Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Height = 56, Font = new Font("Consolas", 10f)
+    };
+    private readonly Label _queryHint = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 4), MaximumSize = new Size(690, 0) };
+    private Label _sourceLabel = new(), _selectorLabel = new();
+    // The controls of each kind of source: shown only for the provider they belong to.
+    private readonly List<Control> _rowsDatabase = new(), _rowsSource = new(), _rowsSelector = new(), _rowsCsv = new(), _rowsHeader = new(), _rowsWeb = new(), _rowsCache = new();
+    private readonly NumericUpDown _cacheSeconds = new() { Minimum = 0, Maximum = DataCache.MaxSeconds, Width = 80 };
 
     // others
     private readonly DataGridView _params = NewGrid();
@@ -79,9 +97,10 @@ public sealed class ReportSettingsDialog : Form
         ("A5 portrait", 559, 794), ("A5 landscape", 794, 559)
     };
 
-    public ReportSettingsDialog(ReportDefinition def)
+    public ReportSettingsDialog(ReportDefinition def, string? baseDirectory = null)
     {
         _def = def;
+        _baseDirectory = baseDirectory;
         Text = "Report settings";
         Size = new Size(760, 600);
         StartPosition = FormStartPosition.CenterParent;
@@ -201,29 +220,37 @@ public sealed class ReportSettingsDialog : Form
         _provider.Items.AddRange(new object[]
         {
             "Sample data (no database)", "SQL Server", "MySQL / MariaDB", "PostgreSQL",
-            "Host application (rows supplied by the host)"
-        });
-        _provider.SelectedIndexChanged += (_, _) => UpdateHostState();
+            "Host application (rows supplied by the host)",
+            "JSON file", "XML file", "CSV / text file", "Excel workbook (.xlsx)", "REST web address (JSON)", "OData web address"
+        });      // in the order of DbProvider, so the position is the value
+        _provider.SelectedIndexChanged += (_, _) => UpdateProviderState();
 
         var top = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2 };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         AddRow(top, "Provider", _provider);
-        AddRow(top, "Connection string", _connection);
-        AddRow(top, "Command timeout (s)", _timeout);
+        AddRow(top, "Connection string", _connection, _rowsDatabase);
+        AddRow(top, "Command timeout (s)", _timeout, _rowsDatabase);
 
-        var test = new Button { Text = "Test connection && load fields", AutoSize = true };
+        var sourceCell = new TableLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 2 };
+        sourceCell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        sourceCell.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        sourceCell.Controls.Add(_source);
+        sourceCell.Controls.Add(_browse);
+        _browse.Click += (_, _) => BrowseForSource();
+        _sourceLabel = AddRow(top, "File", sourceCell, _rowsSource);
+        _selectorLabel = AddRow(top, "Rows are at", _selector, _rowsSelector);
+        AddRow(top, "Separator", _delimiter, _rowsCsv);
+        AddRow(top, "", _hasHeader, _rowsHeader);
+        AddRow(top, "Request headers", _headers, _rowsWeb);
+        AddRow(top, "Reuse rows for (s)", _cacheSeconds, _rowsCache);      // 0 = read the source again on every run
+
+        var test = new Button { Text = "Test && load fields", AutoSize = true };
         test.Click += (_, _) => TestConnection();
-
-        var hint = new Label
-        {
-            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 4),
-            Text = "SQL query (use @ParameterName to pass report parameters safely as database parameters):"
-        };
 
         var body = new Panel { Dock = DockStyle.Fill };
         body.Controls.Add(_query);
-        body.Controls.Add(hint);
+        body.Controls.Add(_queryHint);
         var bottom = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
         bottom.Controls.Add(test);
 
@@ -278,6 +305,10 @@ public sealed class ReportSettingsDialog : Form
         _dataSets.Columns.Add(provider);
         _dataSets.Columns.Add("SetConnection", "Connection string (database sources)");
         _dataSets.Columns.Add("SetQuery", "Query (database sources; @Parameter works)");
+        _dataSets.Columns.Add("SetSource", "File or web address (Json, Xml, Csv, Excel, Rest, OData)");
+        _dataSets.Columns.Add("SetSelector", "Rows at / sheet name");
+        _dataSets.Columns.Add("SetHeaders", "Web headers (Name: value | Name: value)");
+        _dataSets.Columns.Add("SetCache", "Reuse rows for (s, 0 = no)");
 
         var setBox = new GroupBox
         {
@@ -479,15 +510,25 @@ public sealed class ReportSettingsDialog : Form
         ShowWatermarkPicture();
 
         _provider.SelectedIndex = (int)_def.DataSource.Provider;
-        UpdateHostState();
+        UpdateProviderState();
         _connection.Text = _def.DataSource.ConnectionString;
         _query.Text = _def.DataSource.Query.Replace("\r\n", "\n").Replace("\n", Environment.NewLine);
         _timeout.Value = Math.Clamp(_def.DataSource.CommandTimeoutSeconds, 5, 3600);
         _fields.Text = string.Join(Environment.NewLine, _def.DataSource.Fields.Select(f => f.ToString()));
+        _source.Text = _def.DataSource.Source;
+        _selector.Text = _def.DataSource.Selector;
+        _delimiter.Text = _def.DataSource.Delimiter;
+        _hasHeader.Checked = _def.DataSource.HasHeaderRow;
+        _headers.Text = _def.DataSource.Headers.Replace("\r\n", "\n").Replace("\n", Environment.NewLine);
+        _cacheSeconds.Value = Math.Clamp(_def.DataSource.CacheSeconds, 0, DataCache.MaxSeconds);
 
         foreach (var p in _def.Parameters) _params.Rows.Add(p.Name, p.Prompt, p.Type, p.DefaultValue, p.Choices, p.ChoicesQuery, p.DependsOn, p.MultiValue);
         foreach (var d in _def.DataSets)
-            _dataSets.Rows.Add(d.Name, d.DataSource.Provider.ToString(), d.DataSource.ConnectionString, d.DataSource.Query);
+        {
+            var at = _dataSets.Rows.Add(d.Name, d.DataSource.Provider.ToString(), d.DataSource.ConnectionString, d.DataSource.Query,
+                d.DataSource.Source, d.DataSource.Selector, HeadersToCell(d.DataSource.Headers), d.DataSource.CacheSeconds);
+            _dataSets.Rows[at].Tag = d.DataSource;      // the separator and header-row settings have no column: kept as they are
+        }
         foreach (var j in _def.Joins)
             _joins.Rows.Add(j.DataSet, j.LeftField, j.RightField, j.Kind.ToString(), j.Prefix);
         foreach (var g in _def.Groups) _groups.Rows.Add(g.Expression, g.StartNewPage, g.RestartPageNumbers, g.Collapsible, g.StartCollapsed, GroupPageLabel(g), g.PageSizeWhen);
@@ -631,11 +672,19 @@ public sealed class ReportSettingsDialog : Form
                 if (band.Items.Count == 0) band.Height = 0;
         }
 
-        _def.DataSource.Provider = (DbProvider)Math.Max(0, _provider.SelectedIndex);
-        bool host = _def.DataSource.Provider == DbProvider.Host;
-        // A Host report never stores a query or connection string.
-        _def.DataSource.ConnectionString = host ? "" : _connection.Text.Trim();
-        _def.DataSource.Query = host ? "" : _query.Text;
+        var mainProvider = (DbProvider)Math.Max(0, _provider.SelectedIndex);
+        _def.DataSource.Provider = mainProvider;
+        bool host = mainProvider == DbProvider.Host;
+        bool mainFile = mainProvider.IsFile(), mainWeb = mainProvider.IsWeb();
+        // A Host report never stores a query or connection string, and a file or web source has none either.
+        _def.DataSource.ConnectionString = host || mainFile || mainWeb ? "" : _connection.Text.Trim();
+        _def.DataSource.Query = host || mainFile || mainWeb ? "" : _query.Text;
+        _def.DataSource.Source = mainFile || mainWeb ? _source.Text.Trim() : "";
+        _def.DataSource.Selector = (mainFile || mainWeb) && mainProvider != DbProvider.Csv ? _selector.Text.Trim() : "";
+        _def.DataSource.Delimiter = mainProvider == DbProvider.Csv ? _delimiter.Text : "";
+        _def.DataSource.HasHeaderRow = (mainProvider is DbProvider.Csv or DbProvider.Excel) ? _hasHeader.Checked : true;
+        _def.DataSource.Headers = mainWeb ? CellToHeaders(_headers.Text) : "";
+        _def.DataSource.CacheSeconds = (mainProvider is DbProvider.Sample or DbProvider.Host) ? 0 : (int)_cacheSeconds.Value;
         _def.DataSource.CommandTimeoutSeconds = (int)_timeout.Value;
         _def.DataSource.Fields = FieldDefinition.ParseLines(_fields.Lines);
         _def.Parameters = newParams;
@@ -664,15 +713,28 @@ public sealed class ReportSettingsDialog : Form
         string Text(DataGridViewRow row, int cell) => (Convert.ToString(row.Cells[cell].Value) ?? "").Trim();
         _def.DataSets = _dataSets.Rows.Cast<DataGridViewRow>()
             .Where(r => !r.IsNewRow && Text(r, 0).Length > 0)
-            .Select(r => new DataSetDefinition
+            .Select(r =>
             {
-                Name = Text(r, 0),
-                DataSource = new DataSourceDefinition
+                var dsProvider = Enum.TryParse<DbProvider>(Text(r, 1), out var parsedProvider) ? parsedProvider : DbProvider.Host;
+                var dsKept = r.Tag as DataSourceDefinition;
+                bool dsFile = dsProvider.IsFile(), dsWeb = dsProvider.IsWeb(), dsOutside = dsFile || dsWeb;
+                return new DataSetDefinition
                 {
-                    Provider = Enum.TryParse<DbProvider>(Text(r, 1), out var parsedProvider) ? parsedProvider : DbProvider.Host,
-                    ConnectionString = Text(r, 2),
-                    Query = Text(r, 3)
-                }
+                    Name = Text(r, 0),
+                    DataSource = new DataSourceDefinition
+                    {
+                        Provider = dsProvider,
+                        ConnectionString = dsOutside ? "" : Text(r, 2),
+                        Query = dsOutside ? "" : Text(r, 3),
+                        Source = dsOutside ? Text(r, 4) : "",
+                        Selector = dsOutside && dsProvider != DbProvider.Csv ? Text(r, 5) : "",
+                        Headers = dsWeb ? CellToHeaders(Text(r, 6)) : "",
+                        Delimiter = dsFile && dsProvider == DbProvider.Csv ? dsKept?.Delimiter ?? "" : "",
+                        HasHeaderRow = dsKept?.HasHeaderRow ?? true,
+                        CacheSeconds = (dsProvider is DbProvider.Sample or DbProvider.Host)
+                            ? 0 : int.TryParse(Text(r, 7), out var dsSeconds) ? Math.Clamp(dsSeconds, 0, DataCache.MaxSeconds) : 0
+                    }
+                };
             }).ToList();
         _def.Joins = _joins.Rows.Cast<DataGridViewRow>()
             .Where(r => !r.IsNewRow && Text(r, 0).Length > 0)
@@ -686,11 +748,106 @@ public sealed class ReportSettingsDialog : Form
         return true;
     }
 
-    private void UpdateHostState()
+    /// <summary>Shows only the settings that belong to the chosen provider: a database, a file, or a web address.</summary>
+    private void UpdateProviderState()
     {
-        bool host = _provider.SelectedIndex == (int)DbProvider.Host;
+        var provider = (DbProvider)Math.Max(0, _provider.SelectedIndex);
+        bool host = provider == DbProvider.Host, outside = provider.IsFile() || provider.IsWeb();
+
         _connection.Enabled = _query.Enabled = _timeout.Enabled = !host;
-        if (host) { _connection.Text = ""; _query.Text = ""; }
+        if (host || outside) { _connection.Text = ""; _query.Text = ""; }
+
+        foreach (var c in _rowsDatabase) c.Visible = !outside;
+        foreach (var c in _rowsSource) c.Visible = outside;
+        foreach (var c in _rowsSelector) c.Visible = outside && provider != DbProvider.Csv;
+        foreach (var c in _rowsCsv) c.Visible = provider == DbProvider.Csv;
+        foreach (var c in _rowsHeader) c.Visible = provider is DbProvider.Csv or DbProvider.Excel;
+        foreach (var c in _rowsWeb) c.Visible = provider.IsWeb();
+        foreach (var c in _rowsCache) c.Visible = provider is not (DbProvider.Sample or DbProvider.Host);
+        _browse.Visible = provider.IsFile();
+        _query.Visible = !outside;
+
+        _sourceLabel.Text = provider.IsWeb() ? "Web address" : "File";
+        _selectorLabel.Text = provider switch
+        {
+            DbProvider.Json => "Rows are at (path, e.g. data.items; empty = whole file)",
+            DbProvider.Xml => "Rows are the elements (e.g. orders/order)",
+            DbProvider.Excel => "Sheet name (empty = first sheet)",
+            DbProvider.Rest => "Rows are at (path, e.g. data.items)",
+            DbProvider.OData => "Rows are at (empty = the value list)",
+            _ => "Rows are at"
+        };
+        _queryHint.Text = provider.IsFile()
+            ? "The report reads its rows from the file above. A name without a folder is looked up in the folder of the report file. " +
+              "Files up to 50 MB are read. Use Test && load fields to see the fields and fill the field list."
+            : provider.IsWeb()
+                ? "The report reads its rows from the web address above, as JSON. Write {ParameterName} in the address to pass a report parameter (it is URL-encoded). " +
+                  "Only https addresses are read, not addresses on this computer or the local network. Put keys in the headers box, not in the address. " +
+                  "Use Test && load fields to see the fields and fill the field list."
+                : "SQL query (use @ParameterName to pass report parameters safely as database parameters):";
+    }
+
+    private void BrowseForSource()
+    {
+        var provider = (DbProvider)Math.Max(0, _provider.SelectedIndex);
+        using var dlg = new OpenFileDialog
+        {
+            Title = "Choose the data file",
+            Filter = provider switch
+            {
+                DbProvider.Json => "JSON files (*.json)|*.json|All files (*.*)|*.*",
+                DbProvider.Xml => "XML files (*.xml)|*.xml|All files (*.*)|*.*",
+                DbProvider.Csv => "CSV and text files (*.csv;*.tsv;*.txt)|*.csv;*.tsv;*.txt|All files (*.*)|*.*",
+                DbProvider.Excel => "Excel workbooks (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+                _ => "All files (*.*)|*.*"
+            },
+            InitialDirectory = _baseDirectory != null && Directory.Exists(_baseDirectory) ? _baseDirectory : ""
+        };
+        if (dlg.ShowDialog(this) == DialogResult.OK) _source.Text = RelativeToReport(dlg.FileName);
+    }
+
+    /// <summary>A file inside the report's folder is stored by its short name, so the report and its data can be moved together.</summary>
+    private string RelativeToReport(string fullPath)
+    {
+        if (string.IsNullOrEmpty(_baseDirectory)) return fullPath;
+        var relative = Path.GetRelativePath(_baseDirectory, fullPath);
+        bool outside = relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) || Path.IsPathRooted(relative);
+        return outside ? fullPath : relative;
+    }
+
+    private static string HeadersToCell(string headers) =>
+        string.Join(" | ", (headers ?? "").Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0));
+
+    private static string CellToHeaders(string cell) =>
+        string.Join("\n", (cell ?? "").Split('|', '\n').Select(l => l.Trim()).Where(l => l.Length > 0));
+
+    /// <summary>Reads the first rows of a file or web address and offers its fields (with their types) as the report's field list.</summary>
+    private void TestOutsideSource(DataSourceDefinition ds)
+    {
+        var settings = new SourceSettings { BaseDirectory = _baseDirectory };
+        var parameters = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in _def.Parameters)
+            parameters[p.Name] = (p.DefaultValue ?? "").StartsWith('=') ? "" : p.DefaultValue ?? "";   // the address may use {Name}: try it with the default
+        try
+        {
+            Cursor = Cursors.WaitCursor;
+            var fields = DataLoader.DetectFields(ds, settings, parameters);
+            if (fields.Count == 0)
+            {
+                MessageBox.Show(this, "The source was read, but it has no rows, so no fields could be found.",
+                    "Test source", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var shown = string.Join(", ", fields.Take(40).Select(f => $"{f.Name} ({f.Type})")) + (fields.Count > 40 ? ", ..." : "");
+            var use = MessageBox.Show(this, $"The source was read. It has {fields.Count} fields:\n\n{shown}\n\nUse these as the report's field list?",
+                "Test source", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            if (use == DialogResult.Yes) _fields.Text = string.Join(Environment.NewLine, fields.Select(f => f.ToString()));
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "The source could not be read", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally { Cursor = Cursors.Default; }
     }
 
     private void TestConnection()
@@ -700,8 +857,14 @@ public sealed class ReportSettingsDialog : Form
             Provider = (DbProvider)Math.Max(0, _provider.SelectedIndex),
             ConnectionString = _connection.Text.Trim(),
             Query = _query.Text,
-            CommandTimeoutSeconds = (int)_timeout.Value
+            CommandTimeoutSeconds = (int)_timeout.Value,
+            Source = _source.Text.Trim(),
+            Selector = _selector.Text.Trim(),
+            Delimiter = _delimiter.Text,
+            HasHeaderRow = _hasHeader.Checked,
+            Headers = CellToHeaders(_headers.Text)
         };
+        if (ds.Provider.IsFile() || ds.Provider.IsWeb()) { TestOutsideSource(ds); return; }
         try
         {
             Cursor = Cursors.WaitCursor;
@@ -758,6 +921,18 @@ public sealed class ReportSettingsDialog : Form
         t.Controls.Add(new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 12, 6) });
         input.Margin = new Padding(0, 3, 0, 3);
         t.Controls.Add(input);
+    }
+
+    /// <summary>A row whose label and input are shown or hidden together with the other rows of the same group.</summary>
+    private static Label AddRow(TableLayoutPanel t, string label, Control input, List<Control> group)
+    {
+        var caption = new Label { Text = label, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 6, 12, 6) };
+        input.Margin = new Padding(0, 3, 0, 3);
+        t.Controls.Add(caption);
+        t.Controls.Add(input);
+        group.Add(caption);
+        group.Add(input);
+        return caption;
     }
 
     private static DataGridView NewGrid() => new()

@@ -23,12 +23,13 @@ public static class ReportRunner
     }
 
     public static byte[] ToExcel(ReportDefinition definition, IEnumerable<IReadOnlyDictionary<string, object?>> rows,
-        IDictionary<string, string?>? parameters = null, CultureInfo? culture = null, string? baseDirectory = null)
+        IDictionary<string, string?>? parameters = null, CultureInfo? culture = null, string? baseDirectory = null,
+        ExcelOptions? excel = null)
     {
         culture ??= IndianFormat.Culture;   // Excel must read the numbers back with the culture they were printed in
         var result = Render(definition, rows, parameters, culture, baseDirectory);
         using var ms = new MemoryStream();
-        ExcelExporter.Export(result, ms, culture);
+        ExcelExporter.Export(result, ms, culture, excel);
         return ms.ToArray();
     }
 
@@ -41,8 +42,7 @@ public static class ReportRunner
 
         // Work on a copy forced to Host mode: whatever data source the file declares is ignored.
         var def = definition.Clone();
-        def.DataSource.Provider = DbProvider.Host;
-        def.Normalize();
+        def.UseHostDataOnly();      // the main rows and every data set come from the caller, never from a file, address or query in the report
 
         using var measurer = new GdiTextMeasurer();
         var options = new ReportOptions

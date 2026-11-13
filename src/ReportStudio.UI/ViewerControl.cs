@@ -48,7 +48,11 @@ public sealed class ViewerControl : UserControl
         _next.Click += (_, _) => ShowPage(_pageIndex + 1);
 
         AddExport("PDF document", ".pdf", path => PdfExporter.Export(_result!, path));
+        AddExport("PDF/A-2b archive copy (tagged)", ".pdf",
+            path => PdfExporter.Export(_result!, path, new PdfOptions { Conformance = PdfConformance.PdfA2b, Tagged = true }));
         AddExport("Excel workbook", ".xlsx", path => ExcelExporter.Export(_result!, path));
+        AddExport("Excel workbook, one sheet per outer group", ".xlsx",
+            path => ExcelExporter.Export(_result!, path, null, new ExcelOptions { SheetPerGroupLevel = 1 }));
         AddExport("Word document", ".docx", path => WordExporter.Export(_result!, path));
         _export.DropDownItems.Add(new ToolStripSeparator());
         AddImageExport("PNG image", ImageFormatKind.Png);
@@ -106,6 +110,25 @@ public sealed class ViewerControl : UserControl
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool HostOnly { get; set; }
 
+    /// <summary>
+    /// Lets a report read JSON, XML, CSV and Excel files named in the report (requirement 40). Off by default: a report file written by
+    /// someone else could otherwise print any data file the user can read. The designer turns it on for the author's own reports.
+    /// </summary>
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool AllowFileSources { get; set; }
+
+    // Rows of the sources that ask to be reused for a while (CacheSeconds), shared by every viewer in the program (requirement 41).
+    private static readonly ReportStudio.Core.Data.DataCache SharedCache = new();
+
+    /// <summary>Forgets the rows kept for reuse, so the next run reads every source again.</summary>
+    public static void ClearDataCache() => SharedCache.Clear();
+
+    /// <summary>Lets a report read REST and OData web addresses. Off by default, for the same reason as <see cref="AllowFileSources"/>.</summary>
+    [Browsable(false)]
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool AllowWebSources { get; set; }
+
     /// <summary>Culture used for numbers and dates in the report. Defaults to Indian formats (12,34,567.00; dd-MM-yyyy).</summary>
     [Browsable(false)]
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
@@ -128,13 +151,17 @@ public sealed class ViewerControl : UserControl
         {
             Cursor = Cursors.WaitCursor;
             using var measurer = new GdiTextMeasurer();
-            var options = new ReportOptions { BaseDirectory = baseDirectory, Measurer = measurer, Culture = Culture, ToggledGroups = new HashSet<string>(_toggled) };
+            var options = new ReportOptions
+            {
+                BaseDirectory = baseDirectory, Measurer = measurer, Culture = Culture, ToggledGroups = new HashSet<string>(_toggled),
+                Access = new ReportStudio.Core.Data.Sources.SourceAccess { AllowFileSources = AllowFileSources, AllowWebSources = AllowWebSources },
+                Cache = SharedCache
+            };
             var def = definition.Clone();
             if (HostOnly)
             {
                 // The embedding app owns data access: ignore the file's own data source entirely.
-                def.DataSource.Provider = DbProvider.Host;
-                def.Normalize();
+                def.UseHostDataOnly();
             }
             if (def.DataSource.Provider == DbProvider.Host)
             {
@@ -216,9 +243,13 @@ public sealed class ViewerControl : UserControl
         Guard(() =>
         {
             var definition = ReportDefinition.Load(path);
-            if (!UntrustedFileGuard.Confirm(FindForm(), definition, path)) return;
+            if (!UntrustedFileGuard.Confirm(FindForm(), definition, path, AllowFileSources || HostOnly, AllowWebSources || HostOnly)) return;
 
-            var child = new ViewerControl { Culture = Culture, HostOnly = HostOnly, RowProvider = RowProvider };
+            var child = new ViewerControl
+            {
+                Culture = Culture, HostOnly = HostOnly, RowProvider = RowProvider,
+                AllowFileSources = AllowFileSources, AllowWebSources = AllowWebSources
+            };
             var form = new Form { Text = definition.Name, Width = 1000, Height = 800, StartPosition = FormStartPosition.CenterParent };
             form.Controls.Add(child);
             var values = args.Parameters.ToDictionary(p => p.Key, p => (string?)p.Value, StringComparer.OrdinalIgnoreCase);

@@ -7,33 +7,55 @@ using ReportStudio.Core.Model;
 
 namespace ReportStudio.Export;
 
-/// <summary>Writes an editable .xlsx: one worksheet row per report line, numbers stored as real numbers.</summary>
+/// <summary>What the Excel export does beyond the plain table.</summary>
+public sealed class ExcelOptions
+{
+    /// <summary>Totals such as {Sum(Amount)} in group and report footers become live formulas (=SUM(D5:D9)) when they can reproduce the printed number.</summary>
+    public bool Formulas { get; set; } = true;
+
+    /// <summary>
+    /// 0 = everything on one sheet. N = one sheet for each instance of group N (1 = the outermost group, e.g. one sheet per country).
+    /// Ignored when the report has fewer groups than that.
+    /// </summary>
+    public int SheetPerGroupLevel { get; set; }
+}
+
+/// <summary>Writes an editable .xlsx: one worksheet row per report line, numbers stored as real numbers, totals as formulas.</summary>
 public static class ExcelExporter
 {
-    public static void Export(ReportResult report, string path, CultureInfo? culture = null)
+    public static void Export(ReportResult report, string path, CultureInfo? culture = null, ExcelOptions? options = null)
     {
         using var file = File.Create(path);
-        Export(report, file, culture);
+        Export(report, file, culture, options);
     }
 
     /// <summary>Writes the workbook to a stream (the stream is left open and must be seekable).</summary>
-    public static void Export(ReportResult report, Stream stream, CultureInfo? culture = null)
+    public static void Export(ReportResult report, Stream stream, CultureInfo? culture = null, ExcelOptions? options = null)
     {
         culture ??= CultureInfo.CurrentCulture;
+        options ??= new ExcelOptions();
         var grid = Grid.Build(report);
+        var plan = PlanSheets(grid, report.ReportName, options.SheetPerGroupLevel);
+        var formulas = options.Formulas ? new ExcelFormulas(grid, plan.SheetOf, plan.RowNumber, plan.Names, culture) : null;
 
         using var doc = SpreadsheetDocument.Create(stream, SpreadsheetDocumentType.Workbook, autoSave: true);
         var wbPart = doc.AddWorkbookPart();
         wbPart.Workbook = new Workbook();
 
         var styles = new StyleBook();
-        var wsPart = wbPart.AddNewPart<WorksheetPart>();
-        var sheetData = new SheetData();
-        var merges = new List<string>();
-
-        uint r = 1;
-        foreach (var row in grid.Rows)
+        var sheetDatas = new List<SheetData>();
+        var sheetMerges = new List<List<string>>();
+        for (int s = 0; s < plan.Names.Count; s++)
         {
+            sheetDatas.Add(new SheetData());
+            sheetMerges.Add(new List<string>());
+        }
+
+        for (int i = 0; i < grid.Rows.Count; i++)
+        {
+            var row = grid.Rows[i];
+            uint r = (uint)plan.RowNumber[i];
+            var merges = sheetMerges[plan.SheetOf[i]];
             var xr = new Row { RowIndex = r };
             foreach (var cell in row.Cells)
             {
@@ -47,12 +69,14 @@ public static class ExcelExporter
                     xc.DataType = CellValues.Number;
                     xc.CellValue = new CellValue(date.ToOADate().ToString(CultureInfo.InvariantCulture));
                     numberFormat = "dd-mm-yyyy";
+                    AddFormula(xc, formulas, i, cell);
                 }
                 else if (IsNumber(cell.Text, culture, out var number))
                 {
                     xc.DataType = CellValues.Number;
                     xc.CellValue = new CellValue(number.ToString(CultureInfo.InvariantCulture));
                     numberFormat = NumberFormatFor(cell.Text, culture);
+                    AddFormula(xc, formulas, i, cell);
                 }
                 else
                 {
@@ -65,40 +89,137 @@ public static class ExcelExporter
                 if (cell.Span > 1)
                     merges.Add($"{reference}:{ColumnName(cell.Column + cell.Span)}{r}");
             }
-            sheetData.Append(xr);
-            r++;
+            sheetDatas[plan.SheetOf[i]].Append(xr);
         }
 
-        var columns = new Columns();
-        for (int i = 0; i < grid.ColumnWidths.Count; i++)
-            columns.Append(new Column
-            {
-                Min = (uint)(i + 1), Max = (uint)(i + 1),
-                Width = Math.Round(grid.ColumnWidths[i] / 7.0 + 1, 1), CustomWidth = true
-            });
-
-        var worksheet = new Worksheet();
-        if (columns.HasChildren) worksheet.Append(columns);
-        worksheet.Append(sheetData);
-        if (merges.Count > 0)
+        var sheets = new Sheets();
+        for (int s = 0; s < plan.Names.Count; s++)
         {
-            var mc = new MergeCells();
-            foreach (var m in merges) mc.Append(new MergeCell { Reference = m });
-            worksheet.Append(mc);
+            var wsPart = wbPart.AddNewPart<WorksheetPart>();
+            var columns = new Columns();
+            for (int c = 0; c < grid.ColumnWidths.Count; c++)
+                columns.Append(new Column
+                {
+                    Min = (uint)(c + 1), Max = (uint)(c + 1),
+                    Width = Math.Round(grid.ColumnWidths[c] / 7.0 + 1, 1), CustomWidth = true
+                });
+
+            var worksheet = new Worksheet();
+            if (columns.HasChildren) worksheet.Append(columns);
+            worksheet.Append(sheetDatas[s]);
+            if (sheetMerges[s].Count > 0)
+            {
+                var mc = new MergeCells();
+                foreach (var m in sheetMerges[s]) mc.Append(new MergeCell { Reference = m });
+                worksheet.Append(mc);
+            }
+            wsPart.Worksheet = worksheet;
+
+            sheets.Append(new Sheet
+            {
+                Id = wbPart.GetIdOfPart(wsPart),
+                SheetId = (uint)(s + 1),
+                Name = plan.Names[s]
+            });
         }
-        wsPart.Worksheet = worksheet;
 
         var stylesPart = wbPart.AddNewPart<WorkbookStylesPart>();
         stylesPart.Stylesheet = styles.Build();
 
-        var sheets = wbPart.Workbook.AppendChild(new Sheets());
-        sheets.Append(new Sheet
-        {
-            Id = wbPart.GetIdOfPart(wsPart),
-            SheetId = 1,
-            Name = SheetName(report.ReportName)
-        });
+        wbPart.Workbook.AppendChild(sheets);
         wbPart.Workbook.Save();
+    }
+
+    /// <summary>Makes a total cell a live formula when Excel can reproduce the printed number; its cached value stays the printed one.</summary>
+    private static void AddFormula(Cell xc, ExcelFormulas? formulas, int rowIndex, GridCell cell)
+    {
+        var formula = formulas?.For(rowIndex, cell);
+        if (formula != null) xc.InsertAt(new CellFormula(formula), 0);   // the formula comes before the cached value
+    }
+
+    /// <summary>Which sheet and row each grid row lands on, and the sheets' names.</summary>
+    internal sealed class SheetPlan
+    {
+        public int[] SheetOf { get; init; } = Array.Empty<int>();
+        public int[] RowNumber { get; init; } = Array.Empty<int>();
+        public List<string> Names { get; init; } = new();
+    }
+
+    internal static SheetPlan PlanSheets(Grid grid, string reportName, int level)
+    {
+        int count = grid.Rows.Count;
+        var sheetOf = new int[count];
+        var rowNumber = new int[count];
+
+        var keys = new int?[count];
+        if (level > 0)
+            for (int i = 0; i < count; i++)
+                if (grid.Rows[i].GroupIds.Length >= level) keys[i] = grid.Rows[i].GroupIds[level - 1];
+
+        if (!keys.Any(k => k != null))
+        {
+            // No split: one sheet named after the report.
+            for (int i = 0; i < count; i++) rowNumber[i] = i + 1;
+            return new SheetPlan { SheetOf = sheetOf, RowNumber = rowNumber, Names = new List<string> { SheetName(reportName) } };
+        }
+
+        // Rows above the first group (report header) and the headers of outer groups join the sheet that follows them;
+        // footers and the report footer join the sheet before them.
+        int? next = null;
+        for (int i = count - 1; i >= 0; i--)
+        {
+            if (keys[i] != null) next = keys[i];
+            else if (grid.Rows[i].Band is BandKind.ReportHeader or BandKind.PageHeader or BandKind.GroupHeader) keys[i] = next;
+        }
+        int? previous = null;
+        for (int i = 0; i < count; i++)
+        {
+            if (keys[i] != null) previous = keys[i];
+            else keys[i] = previous;
+        }
+        int firstKey = keys.First(k => k != null)!.Value;
+
+        var order = new List<int>();
+        var names = new List<string>();
+        var counters = new List<int>();
+        for (int i = 0; i < count; i++)
+        {
+            int key = keys[i] ?? firstKey;
+            int sheet = order.IndexOf(key);
+            if (sheet < 0)
+            {
+                order.Add(key);
+                counters.Add(0);
+                sheet = order.Count - 1;
+                names.Add(UniqueSheetName(KeyText(grid, level, key, sheet), names));
+            }
+            sheetOf[i] = sheet;
+            rowNumber[i] = ++counters[sheet];
+        }
+        return new SheetPlan { SheetOf = sheetOf, RowNumber = rowNumber, Names = names };
+    }
+
+    private static string KeyText(Grid grid, int level, int key, int sheet)
+    {
+        foreach (var row in grid.Rows)
+            if (row.GroupIds.Length >= level && row.GroupIds[level - 1] == key)
+            {
+                var text = row.GroupPath[level - 1];
+                return text.Trim().Length == 0 ? "(blank)" : text;
+            }
+        return "Group " + (sheet + 1);
+    }
+
+    private static string UniqueSheetName(string wanted, List<string> taken)
+    {
+        string name = SheetName(wanted);
+        if (!taken.Contains(name, StringComparer.OrdinalIgnoreCase)) return name;
+        for (int n = 2; ; n++)
+        {
+            string suffix = $" ({n})";
+            string candidate = (name.Length + suffix.Length > 31 ? name.Substring(0, 31 - suffix.Length) : name) + suffix;
+            if (!taken.Contains(candidate, StringComparer.OrdinalIgnoreCase)) return candidate;
+        }
     }
 
     private static bool IsNumber(string text, CultureInfo culture, out decimal value)
@@ -133,7 +254,7 @@ public static class ExcelExporter
     private static string SheetName(string name)
     {
         var bad = new[] { '\\', '/', '?', '*', '[', ']', ':' };
-        var clean = new string((name ?? "").Where(c => !bad.Contains(c)).ToArray()).Trim();
+        var clean = new string((name ?? "").Where(c => !bad.Contains(c)).ToArray()).Trim().Trim('\'');
         if (clean.Length == 0) clean = "Report";
         return clean.Length > 31 ? clean.Substring(0, 31) : clean;
     }

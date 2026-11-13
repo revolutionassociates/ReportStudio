@@ -14,11 +14,22 @@ public class GridCell
     public HAlign Align { get; init; }
     public string ForeColor { get; init; } = "";
     public string BackColor { get; init; } = "";
+    /// <summary>The plain field this cell shows ({Amount}), or "".</summary>
+    public string Field { get; init; } = "";
+    /// <summary>The total this cell shows ({Sum(Amount)}): Sum, Avg, Min, Max or Count, or "".</summary>
+    public string AggFunction { get; init; } = "";
+    public string AggField { get; init; } = "";
 }
 
 public class GridRow
 {
     public BandKind Band { get; init; }
+    /// <summary>1 = outermost group, for the rows of a group header or footer; 0 otherwise.</summary>
+    public int GroupLevel { get; init; }
+    public string[] GroupPath { get; init; } = Array.Empty<string>();
+    public int[] GroupIds { get; init; } = Array.Empty<int>();
+    /// <summary>False for the second and later visual lines of one band instance.</summary>
+    public bool FirstLine { get; init; } = true;
     public List<GridCell> Cells { get; } = new();
 }
 
@@ -66,9 +77,16 @@ public class Grid
         {
             // Items sharing a visual line (Y within 4px) share a row; a title stacked above a subtitle
             // inside one band becomes two rows so nothing is lost.
+            bool firstLine = true;
             foreach (var line in band.GroupBy(t => Math.Round(t.Item.Y / 4)).OrderBy(g => g.Key))
             {
-                var row = new GridRow { Band = line.First().Item.Band };
+                var head = line.First().Item;
+                var row = new GridRow
+                {
+                    Band = head.Band, GroupLevel = head.GroupLevel, GroupPath = head.GroupPath,
+                    GroupIds = head.GroupIds, FirstLine = firstLine
+                };
+                firstLine = false;
                 int lastColumn = -1;
                 foreach (var (_, it) in line.OrderBy(t => t.Item.X))
                 {
@@ -82,7 +100,8 @@ public class Grid
                     row.Cells.Add(new GridCell
                     {
                         Column = col, Span = span, Text = it.Text, Bold = it.Bold, Italic = it.Italic,
-                        FontSize = it.FontSize, Align = it.HAlign, ForeColor = it.ForeColor, BackColor = it.BackColor
+                        FontSize = it.FontSize, Align = it.HAlign, ForeColor = it.ForeColor, BackColor = it.BackColor,
+                        Field = it.Field, AggFunction = it.AggFunction, AggField = it.AggField
                     });
                 }
                 if (row.Cells.Count > 0) grid.Rows.Add(row);

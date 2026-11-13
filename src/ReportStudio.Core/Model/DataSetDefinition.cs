@@ -20,6 +20,7 @@ public class DataSetDefinition
             DataSource.Query = "";
             DataSource.ConnectionString = "";
             DataSource.Source = "";
+            DataSource.Headers = "";
         }
     }
 }

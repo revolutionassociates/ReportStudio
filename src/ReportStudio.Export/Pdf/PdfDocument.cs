@@ -24,9 +24,12 @@ internal sealed class PdfDocument
 
     public string Title { get; }
 
+    /// <summary>Write a tagged PDF: pages mark what they draw (set before the first page is added), and Save adds the structure tree.</summary>
+    public bool Tagged { get; set; }
+
     public PdfPage AddPage(double widthPixels, double heightPixels)
     {
-        var page = new PdfPage(widthPixels, heightPixels);
+        var page = new PdfPage(widthPixels, heightPixels) { Tagging = Tagged };
         _pages.Add(page);
         return page;
     }
@@ -157,9 +160,14 @@ internal sealed class PdfDocument
 
     public void Save(Stream stream, PdfOptions? options)
     {
+        bool archive = options?.Conformance == PdfConformance.PdfA2b;
+        if (archive && options!.NeedsEncryption)
+            throw new InvalidOperationException("A PDF/A file cannot be encrypted: remove the passwords and restrictions, or do not ask for PDF/A.");
+
         if (_pages.Count == 0) AddPage(794, 1123);               // a PDF needs at least one page
 
         var file = new PdfFile();
+        if (archive) file.Version = "1.7";
         file.Catalog = file.Reserve();
         var pages = file.Reserve();
 
@@ -213,6 +221,8 @@ internal sealed class PdfDocument
                 .Put("Resources", new PdfRef(resourcesRef))
                 .Put("Contents", new PdfRef(contentRef));
 
+            if (Tagged) pageDict.Put("StructParents", index).PutName("Tabs", "S");   // the page's entry in the parent tree; tab through links in structure order
+
             var annots = new PdfArray();
             foreach (var link in page.Links)
             {
@@ -249,12 +259,78 @@ internal sealed class PdfDocument
         int outlineRoot = WriteOutline(file, pageRefs);
         if (outlineRoot != 0)
             catalog.Put("Outlines", new PdfRef(outlineRoot)).PutName("PageMode", "UseOutlines");
+        if (Tagged) WriteStructure(file, catalog, pageRefs, options?.Language);
+        var stamp = (options?.CreationTime ?? DateTime.UtcNow).ToUniversalTime();
+        if (archive) WriteArchiveParts(file, catalog, stamp);
         file.Set(file.Catalog, catalog);
-        file.Info = file.Add(new PdfDict()
-            .Put("Title", PdfString.Text(Title))
-            .Put("Producer", PdfString.Text("ReportStudio")));
+
+        // A PDF/A file repeats title, producer and dates in its XMP metadata and they must agree with this dictionary.
+        var info = new PdfDict()
+            .Put("Title", PdfString.Text(archive ? PdfXmp.CleanText(Title) : Title))
+            .Put("Producer", PdfString.Text("ReportStudio"));
+        if (archive)
+            info.Put("CreationDate", PdfString.Text(PdfXmp.InfoDate(stamp))).Put("ModDate", PdfString.Text(PdfXmp.InfoDate(stamp)));
+        file.Info = file.Add(info);
 
         file.Save(stream, options);
+    }
+
+    /// <summary>
+    /// The structure tree of a tagged PDF: one Document element holding, page after page, an element for each piece of marked
+    /// content (its number on the page is the MCID), and the parent tree that leads from a page's marked content back to them.
+    /// </summary>
+    private void WriteStructure(PdfFile file, PdfDict catalog, List<int> pageRefs, string? language)
+    {
+        var root = file.Reserve();
+        var document = file.Reserve();
+        var kids = new PdfArray();
+        var numbers = new PdfArray();
+        for (int p = 0; p < _pages.Count; p++)
+        {
+            var perPage = new PdfArray();
+            foreach (var tag in _pages[p].Tags)
+            {
+                var element = new PdfDict()
+                    .PutName("Type", "StructElem").PutName("S", tag.Structure)
+                    .Put("P", new PdfRef(document)).Put("Pg", new PdfRef(pageRefs[p]))
+                    .Put("K", tag.Mcid);
+                if (tag.Alt.Length > 0) element.Put("Alt", PdfString.Text(tag.Alt));
+                int number = file.Add(element);
+                kids.Add(new PdfRef(number));
+                perPage.Add(new PdfRef(number));
+            }
+            numbers.Add(new PdfInt(p)).Add(perPage);
+        }
+
+        file.Set(document, new PdfDict()
+            .PutName("Type", "StructElem").PutName("S", "Document")
+            .Put("P", new PdfRef(root)).Put("K", kids));
+        file.Set(root, new PdfDict()
+            .PutName("Type", "StructTreeRoot")
+            .Put("K", new PdfRef(document))
+            .Put("ParentTree", new PdfDict().Put("Nums", numbers)));
+
+        catalog.Put("StructTreeRoot", new PdfRef(root))
+            .Put("MarkInfo", new PdfDict().Put("Marked", true))
+            .Put("Lang", PdfString.Text(string.IsNullOrWhiteSpace(language) ? "en" : language.Trim()))
+            .Put("ViewerPreferences", new PdfDict().Put("DisplayDocTitle", true));
+    }
+
+    /// <summary>What PDF/A-2 asks of the file besides embedded fonts: XMP metadata, and an output intent that says the colours are sRGB.</summary>
+    private void WriteArchiveParts(PdfFile file, PdfDict catalog, DateTime stamp)
+    {
+        var metadata = file.Add(new PdfStream(
+            new PdfDict().PutName("Type", "Metadata").PutName("Subtype", "XML"),
+            PdfXmp.Build(PdfXmp.CleanText(Title), "ReportStudio", stamp), compress: false));
+        catalog.Put("Metadata", new PdfRef(metadata));
+
+        var profile = file.Add(new PdfStream(new PdfDict().Put("N", 3), PdfIccProfile.SRgb()));
+        var intent = file.Add(new PdfDict()
+            .PutName("Type", "OutputIntent").PutName("S", "GTS_PDFA1")
+            .Put("OutputConditionIdentifier", PdfString.Text(PdfIccProfile.Name))
+            .Put("Info", PdfString.Text(PdfIccProfile.Name))
+            .Put("DestOutputProfile", new PdfRef(profile)));
+        catalog.Put("OutputIntents", new PdfArray().Add(new PdfRef(intent)));
     }
 }
 
@@ -273,6 +349,31 @@ internal sealed class PdfPage
     public double HeightPixels { get; }
 
     public string Content => _content.ToString();
+
+    /// <summary>True for a tagged PDF: everything drawn is then wrapped in marked content, as page decoration or as a tagged element.</summary>
+    public bool Tagging { get; init; }
+
+    /// <summary>The tagged pieces of the page; the index in this list is the MCID in the content.</summary>
+    public List<PdfTag> Tags { get; } = new();
+
+    /// <summary>Starts a tagged piece (structure type such as P or Figure, with the alternative text of a figure). End it with <see cref="EndMarked"/>. Does nothing in an untagged PDF.</summary>
+    public void BeginTag(string structure, string alt = "")
+    {
+        if (!Tagging) return;
+        _content.Append('/').Append(structure).Append(" <</MCID ").Append(Tags.Count).Append(">> BDC\n");
+        Tags.Add(new PdfTag(structure, Tags.Count, alt));
+    }
+
+    /// <summary>Starts content that is not part of the document's text (backgrounds, lines, boxes). End it with <see cref="EndMarked"/>.</summary>
+    public void BeginArtifact()
+    {
+        if (Tagging) _content.Append("/Artifact BMC\n");
+    }
+
+    public void EndMarked()
+    {
+        if (Tagging) _content.Append("EMC\n");
+    }
 
     /// <summary>Clickable areas of the page; each goes to a web address (<c>Uri</c>) or to a named place in the document (<c>Bookmark</c>).</summary>
     public List<PdfLinkArea> Links { get; } = new();
@@ -503,6 +604,9 @@ internal sealed class PdfImageResource
         return file.Add(new PdfStream(dict, _rgb));
     }
 }
+
+/// <summary>One tagged piece of a page: its structure type, its marked-content number and, for a figure, its alternative text.</summary>
+internal sealed record PdfTag(string Structure, int Mcid, string Alt);
 
 /// <summary>A clickable rectangle in report pixels.</summary>
 internal sealed record PdfLinkArea(double X, double Y, double Width, double Height, string Uri, string Bookmark);

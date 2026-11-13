@@ -57,6 +57,16 @@ public class ReportDefinition
         || (DataSource.Provider.IsDatabase() && Parameters.Any(p => !string.IsNullOrWhiteSpace(p.ChoicesQuery)))
         || DataSets.Any(d => d.DataSource.ReadsExternalData);
 
+    /// <summary>True when the report (or one of its data sets) reads a JSON, XML, CSV or Excel file.</summary>
+    [JsonIgnore]
+    public bool UsesFileSources =>
+        (DataSource.Provider.IsFile() && DataSource.ReadsExternalData) || DataSets.Any(d => d.DataSource.Provider.IsFile() && d.DataSource.ReadsExternalData);
+
+    /// <summary>True when the report (or one of its data sets) reads a REST or OData web address.</summary>
+    [JsonIgnore]
+    public bool UsesWebSources =>
+        (DataSource.Provider.IsWeb() && DataSource.ReadsExternalData) || DataSets.Any(d => d.DataSource.Provider.IsWeb() && d.DataSource.ReadsExternalData);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
@@ -100,6 +110,22 @@ public class ReportDefinition
     public static bool IsValidVariableName(string? name) =>
         !string.IsNullOrEmpty(name) && !char.IsDigit(name[0]) && name.All(ch => char.IsLetterOrDigit(ch) || ch == '_');
 
+    /// <summary>
+    /// For a host that owns all data access: the report's rows and every one of its data sets come from the host (named data sets by
+    /// <c>ReportOptions.DataSets</c>), whatever query, file or web address the report file carries.
+    /// </summary>
+    public void UseHostDataOnly()
+    {
+        DataSource.Provider = DbProvider.Host;
+        DataSets ??= new();
+        foreach (var d in DataSets.Where(d => d != null))
+        {
+            d.DataSource ??= new();
+            d.DataSource.Provider = DbProvider.Host;
+        }
+        Normalize();
+    }
+
     /// <summary>Makes Kind values and names consistent after loading or editing.</summary>
     public void Normalize()
     {
@@ -117,6 +143,7 @@ public class ReportDefinition
             DataSource.Query = "";
             DataSource.ConnectionString = "";
             DataSource.Source = "";
+            DataSource.Headers = "";
         }
 
         Watermark ??= new WatermarkSettings();      // a file may carry "Watermark": null
@@ -541,6 +568,15 @@ public class DataSourceDefinition
     /// <summary>CSV and Excel: the first row holds the field names. Without it the fields are Column1, Column2, ...</summary>
     public bool HasHeaderRow { get; set; } = true;
 
+    /// <summary>REST and OData: extra request headers, one per line as "Name: value" (an API key, for example). Never shown in warnings or errors.</summary>
+    public string Headers { get; set; } = "";
+
+    /// <summary>
+    /// How many seconds the rows may be reused by a later run instead of being read again (0 = always read again). Needs the host or
+    /// viewer to keep a <see cref="ReportStudio.Core.Data.DataCache"/>; at most a day. Ignored for the sample data and Host rows.
+    /// </summary>
+    public int CacheSeconds { get; set; }
+
     /// <summary>
     /// True when running this source reads something outside the report: a database query, a file, a web address.
     /// Such a report asks for trust when it comes from a file.
@@ -554,8 +590,16 @@ public class DataSourceDefinition
     public string DescribeForTrust(int maxChars)
     {
         string text = Provider.IsDatabase() ? $"{Provider}, {MaskedConnectionString}:\n{Query.Trim()}"
-            : $"{Provider}: {MaskedSource}" + (string.IsNullOrWhiteSpace(Selector) ? "" : $"\nSelect: {Selector.Trim()}");
+            : $"{Provider}: {MaskedSource}" + (string.IsNullOrWhiteSpace(Selector) ? "" : $"\nSelect: {Selector.Trim()}") + HeaderNamesForTrust();
         return text.Length > maxChars ? text[..maxChars] + " …" : text;
+    }
+
+    // Only the names of the headers are shown: their values are keys.
+    private string HeaderNamesForTrust()
+    {
+        if (!Provider.IsWeb() || string.IsNullOrWhiteSpace(Headers)) return "";
+        var names = Headers.Split('\n').Select(l => l.Split(':')[0].Trim()).Where(n => n.Length > 0).ToList();
+        return names.Count == 0 ? "" : "\nSends headers: " + string.Join(", ", names);
     }
 
     /// <summary>The source with secrets hidden: a user name and password in a web address, and values of parameters called key, token, secret, password and the like.</summary>

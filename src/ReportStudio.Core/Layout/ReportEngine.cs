@@ -43,9 +43,21 @@ public class ReportOptions
     /// <summary>Allows data files on network paths (\\server\share). Off by default, because opening one sends the user's Windows credentials to that server.</summary>
     public bool AllowNetworkPaths { get; set; }
 
+    /// <summary>
+    /// Which kinds of outside data this run may read (requirement 40): data files, web addresses, and whether web addresses may point at the
+    /// local network. Everything is allowed here; a viewer that opens other people's reports turns file and web sources off.
+    /// </summary>
+    public ReportStudio.Core.Data.Sources.SourceAccess Access { get; set; } = new();
+
+    /// <summary>
+    /// Keeps the rows of the sources that set CacheSeconds, so a later run with this same cache does not read them again (requirement 41).
+    /// The host owns it and decides how long it lives; null (the default) keeps nothing.
+    /// </summary>
+    public ReportStudio.Core.Data.DataCache? Cache { get; set; }
+
     internal ReportStudio.Core.Data.Sources.SourceSettings SourceSettings => new()
     {
-        BaseDirectory = BaseDirectory, FileRoot = SourceRoot, AllowNetworkPaths = AllowNetworkPaths
+        BaseDirectory = BaseDirectory, FileRoot = SourceRoot, AllowNetworkPaths = AllowNetworkPaths, Access = Access, Cache = Cache
     };
 
     /// <summary>The report's data sets for this run (requirement 39), built by the engine from the report's definition and <see cref="DataSets"/>.</summary>
@@ -55,7 +67,7 @@ public class ReportOptions
     {
         Culture = Culture, BaseDirectory = BaseDirectory, Measurer = Measurer, Rows = Rows, Now = Now,
         SubReports = SubReports, DataSets = DataSets, ToggledGroups = ToggledGroups, SubReportDepth = SubReportDepth,
-        SourceRoot = SourceRoot, AllowNetworkPaths = AllowNetworkPaths, Catalog = catalog
+        SourceRoot = SourceRoot, AllowNetworkPaths = AllowNetworkPaths, Access = Access, Cache = Cache, Catalog = catalog
     };
 }
 
@@ -168,7 +180,7 @@ public static class ReportEngine
         {
             Culture = o.Culture, BaseDirectory = o.BaseDirectory, Measurer = o.Measurer, Now = o.Now,
             SubReports = o.SubReports, DataSets = o.DataSets, SubReportDepth = o.SubReportDepth,
-            ToggledGroups = o.ToggledGroups, SourceRoot = o.SourceRoot, AllowNetworkPaths = o.AllowNetworkPaths,
+            ToggledGroups = o.ToggledGroups, SourceRoot = o.SourceRoot, AllowNetworkPaths = o.AllowNetworkPaths, Access = o.Access, Cache = o.Cache,
             Rows = rows.Select(ToRow).ToList()
         };
         return Run(def, parameterValues, copy);
@@ -331,6 +343,9 @@ public static class ReportEngine
         private readonly List<(GroupDefinition Group, Row First, List<Row> Rows)> _active = new();
         private bool _continued;       // true while a header is reprinted on a continuation page
         private string _groupPath = "";   // identifies the group instance being printed (outer keys included), for drill-down
+        private readonly List<string> _keyTexts = new();   // key of each group instance being printed, outermost first (for Excel sheets)
+        private readonly List<int> _keyIds = new();        // a number per group instance, unique even when two keys are equal
+        private int _groupSeq;
         private string _drillKey = "";    // set while a collapsible group's header prints: its items become clickable
 
         private sealed class VarState
@@ -519,7 +534,10 @@ public static class ReportEngine
 
                 // Drill-down: a closed instance prints its header and footer only. Its id includes the outer groups' keys.
                 var outerPath = _groupPath;
-                var id = outerPath + "/" + level + ":" + Expr.Format(key, null, CultureInfo.InvariantCulture);
+                string groupKeyText = Expr.Format(key, null, CultureInfo.InvariantCulture);
+                var id = outerPath + "/" + level + ":" + groupKeyText;
+                _keyTexts.Add(groupKeyText);
+                _keyIds.Add(++_groupSeq);
                 bool collapsed = group.Collapsible && (group.StartCollapsed ^ (_opt.ToggledGroups?.Contains(id) == true));
                 var mark = !group.Collapsible ? "" : collapsed ? "+" : "-";
 
@@ -535,6 +553,8 @@ public static class ReportEngine
                 _vars["DrillMark"] = mark;
                 RenderBand(group.Footer, partition[partition.Count - 1], partition);
                 _active.RemoveAt(_active.Count - 1);
+                _keyTexts.RemoveAt(_keyTexts.Count - 1);
+                _keyIds.RemoveAt(_keyIds.Count - 1);
                 i = j;
             }
         }
@@ -871,11 +891,24 @@ public static class ReportEngine
         private void Emit(Band band, List<RenderedItem> items)
         {
             _bandInstance++;
+
+            // Which group instances these items belong to: detail rows sit in all open groups, a group header or
+            // footer in the groups down to its own, everything else in none.
+            int bandLevel = 0;
+            if (band.Kind is BandKind.GroupHeader or BandKind.GroupFooter)
+                bandLevel = _def.Groups.FindIndex(gd => ReferenceEquals(gd.Header, band) || ReferenceEquals(gd.Footer, band)) + 1;
+            int pathLength = band.Kind == BandKind.Detail ? _keyTexts.Count : Math.Min(bandLevel, _keyTexts.Count);
+            var pathTexts = _keyTexts.Take(pathLength).ToArray();
+            var pathIds = _keyIds.Take(pathLength).ToArray();
+
             foreach (var it in items)
             {
                 it.Y += _y;
                 it.Band = band.Kind;
                 it.BandInstance = _bandInstance;
+                it.GroupLevel = bandLevel;
+                it.GroupPath = pathTexts;
+                it.GroupIds = pathIds;
                 if (_drillKey.Length > 0 && band.Kind == BandKind.GroupHeader) it.DrillKey = _drillKey;
                 _page.Items.Add(it);
             }
@@ -920,6 +953,7 @@ public static class ReportEngine
                 {
                     if (item.RichText) ApplyRichText(item, r, ctx);
                     else r.Text = SafeText(item.Text, item.Format, ctx);
+                    if (!item.RichText) ExportHints.Apply(item.Text, r);
                     if (item.CanGrow && r.Text.Length > 0 && !TextTurn.IsTurned(item.TextRotation))
                         r.Height = Math.Max(item.Height, _opt.Measurer.MeasureHeight(r.Text, item, item.Width));
                 }
@@ -1233,7 +1267,7 @@ public static class ReportEngine
             {
                 Culture = _opt.Culture, BaseDirectory = _opt.BaseDirectory, Measurer = _opt.Measurer, Now = _now,
                 SubReports = _opt.SubReports, DataSets = _opt.DataSets, SubReportDepth = _opt.SubReportDepth + 1,
-                SourceRoot = _opt.SourceRoot, AllowNetworkPaths = _opt.AllowNetworkPaths,
+                SourceRoot = _opt.SourceRoot, AllowNetworkPaths = _opt.AllowNetworkPaths, Access = _opt.Access, Cache = _opt.Cache,
                 Rows = childRows
             };
 

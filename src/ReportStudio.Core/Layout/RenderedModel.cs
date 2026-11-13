@@ -59,6 +59,48 @@ public class RenderedItem
     public BandKind Band { get; set; }
     /// <summary>Sequence number of the band instance on the page, so items of one band line up in one row.</summary>
     public int BandInstance { get; set; }
+
+    /// <summary>For Text items whose whole text is one plain field, such as {Amount}: that field's name. "" otherwise. Lets Excel know which cells are the values of a field.</summary>
+    public string Field { get; set; } = "";
+    /// <summary>For Text items whose whole text is one total of a plain field, such as {Sum(Amount)}: the function (Sum, Avg, Min, Max or Count), else "".</summary>
+    public string AggFunction { get; set; } = "";
+    /// <summary>The field the total above is taken over. Empty for Count(), which counts rows.</summary>
+    public string AggField { get; set; } = "";
+    /// <summary>For group header and footer items: which group (1 = outermost). 0 for everything else.</summary>
+    public int GroupLevel { get; set; }
+    /// <summary>The key of each group instance this item sits in, outermost first (a header or footer lists the groups down to its own). Empty outside groups.</summary>
+    public string[] GroupPath { get; set; } = Array.Empty<string>();
+    /// <summary>One number per entry of <see cref="GroupPath"/>, different for every group instance, even when two instances have the same key.</summary>
+    public int[] GroupIds { get; set; } = Array.Empty<int>();
+}
+
+/// <summary>Recognises the two shapes of text Excel can turn into live cells: {Field} and {Total(Field)}.</summary>
+public static class ExportHints
+{
+    private static readonly System.Text.RegularExpressions.Regex FieldOnly =
+        new(@"^\s*\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\s*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static readonly System.Text.RegularExpressions.Regex Total =
+        new(@"^\s*\{\s*(Sum|Avg|Min|Max|Count)\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)?\s*\)\s*\}\s*$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>Fills <see cref="RenderedItem.Field"/>, <see cref="RenderedItem.AggFunction"/> and <see cref="RenderedItem.AggField"/> from the designed text.</summary>
+    public static void Apply(string? designedText, RenderedItem item)
+    {
+        if (string.IsNullOrEmpty(designedText)) return;
+        var m = Total.Match(designedText);
+        if (m.Success)
+        {
+            string fn = m.Groups[1].Value;
+            string field = m.Groups[2].Value;
+            // Sum, Avg, Min and Max need a field; Count() with none counts rows.
+            if (field.Length == 0 && !fn.Equals("Count", StringComparison.OrdinalIgnoreCase)) return;
+            item.AggFunction = char.ToUpperInvariant(fn[0]) + fn.Substring(1).ToLowerInvariant();
+            item.AggField = field;
+            return;
+        }
+        var f = FieldOnly.Match(designedText);
+        if (f.Success) item.Field = f.Groups[1].Value;
+    }
 }
 
 public class RenderedPage

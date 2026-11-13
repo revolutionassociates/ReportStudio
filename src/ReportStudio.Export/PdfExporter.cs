@@ -22,15 +22,19 @@ public static class PdfExporter
 
     public static void Export(ReportResult report, Stream stream, PdfOptions? options = null)
     {
-        var doc = new PdfDocument(report.ReportName);
+        var doc = new PdfDocument(report.ReportName) { Tagged = options?.Tagged == true };
         foreach (var page in report.Pages)
         {
             var p = doc.AddPage(page.Width, page.Height);
+            p.BeginArtifact();                  // (tagged PDF: background and watermark are page decoration)
             DrawBackground(doc, p, page);       // first of all
             DrawWatermark(doc, p, page);        // then the watermark, so it lies behind the items
+            p.EndMarked();
             foreach (var item in page.Items)
             {
+                BeginMarked(p, item);
                 DrawItem(doc, p, item);
+                p.EndMarked();
                 if (item.Bookmark.Length > 0) doc.Bookmark(item.Bookmark, doc.PageCount - 1, item.Y);
                 AddLink(p, item);
             }
@@ -100,6 +104,29 @@ public static class PdfExporter
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or ExternalException)
         {
             // unreadable picture: leave it out
+        }
+    }
+
+    /// <summary>
+    /// Tagged PDF: text is a paragraph, a picture or a code is a figure (a code's value is its alternative text), and the rest
+    /// (lines, boxes, empty text) is page decoration. Does nothing when the PDF is not tagged.
+    /// </summary>
+    private static void BeginMarked(PdfPage page, RenderedItem it)
+    {
+        switch (it.Kind)
+        {
+            case ItemKind.Text when it.Text.Trim().Length > 0 || it.Runs is { Count: > 0 }:
+                page.BeginTag("P");
+                break;
+            case ItemKind.Image:
+                page.BeginTag("Figure", "Image");
+                break;
+            case ItemKind.QrCode or ItemKind.Barcode or ItemKind.Barcode2D:
+                page.BeginTag("Figure", it.Text);
+                break;
+            default:
+                page.BeginArtifact();
+                break;
         }
     }
 
@@ -239,6 +266,7 @@ public static class PdfExporter
     {
         var rect = new RectangleF((float)it.X, (float)it.Y, (float)it.Width, (float)it.Height);
         if (PdfComplexText.TryDraw(g, it, rect)) return;   // Hindi, Tamil, ...: shaped by GDI+, see PdfComplexText
+        if (it.Runs is { Count: > 0 }) { DrawRichText(doc, g, it); return; }
 
         var face = PdfFontProvider.Resolve(it.FontFamily, it.Bold, it.Italic);
         var font = doc.Font(face);
@@ -276,6 +304,64 @@ public static class PdfExporter
             if (it.Underline && line.Length > 0)
                 g.Line(x, baseline + size * 0.12, x + width, baseline + size * 0.12, brush, Math.Max(0.5, size / 18));
             top += lineHeight;
+        }
+    }
+
+    /// <summary>
+    /// Rich text (requirement 36b): lines come from the shared RichLayout; each piece is written in its own font and colour on a common
+    /// baseline, with underline and strike-through drawn as lines. Without word wrap the lines are clipped by the page, not ellipsised.
+    /// </summary>
+    private static void DrawRichText(PdfDocument doc, PdfPage g, RenderedItem it)
+    {
+        double size = it.FontSize * 96.0 / 72.0;
+        double innerX = it.X + 2, innerWidth = Math.Max(1, it.Width - 4);
+        var runs = it.Runs!.Select(r => r with { Text = Clean(r.Text) }).ToList();
+
+        var faces = new Dictionary<ReportStudio.Core.Text.TextRun, TrueTypeFont>();
+        TrueTypeFont FaceOf(ReportStudio.Core.Text.TextRun run)
+        {
+            if (!faces.TryGetValue(run, out var face))
+                faces[run] = face = PdfFontProvider.Resolve(it.FontFamily, it.Bold || run.Bold, it.Italic || run.Italic);
+            return face;
+        }
+        var itemColor = ColorUtil.Parse(it.ForeColor) ?? Color.Black;
+        Color ColorOf(ReportStudio.Core.Text.TextRun run) =>
+            run.Color.Length > 0 ? ColorUtil.Parse(run.Color) ?? itemColor : itemColor;
+
+        var basis = PdfFontProvider.Resolve(it.FontFamily, it.Bold, it.Italic);
+        var lines = ReportStudio.Core.Text.RichLayout.Wrap(runs, innerWidth, it.WordWrap,
+            (run, text) => FaceOf(run).Width(text, size), run => FaceOf(run).LineHeight(size), basis.LineHeight(size));
+
+        double total = ReportStudio.Core.Text.RichLayout.TotalHeight(lines);
+        double top = it.VAlign switch
+        {
+            VAlign.Middle => it.Y + (it.Height - total) / 2,
+            VAlign.Bottom => it.Y + it.Height - total,
+            _ => it.Y
+        };
+
+        foreach (var line in lines)
+        {
+            double x = it.HAlign switch
+            {
+                HAlign.Center => innerX + (innerWidth - line.Width) / 2,
+                HAlign.Right => innerX + innerWidth - line.Width,
+                _ => innerX
+            };
+            double baseline = top + (line.Pieces.Count == 0 ? 0 : line.Pieces.Max(p => FaceOf(p.Run).BaselineOffset(size)));
+            foreach (var piece in line.Pieces)
+            {
+                var color = ColorOf(piece.Run);
+                double thickness = Math.Max(0.5, size / 18);
+                if (piece.Text.Trim().Length > 0)
+                    g.Text(doc.Font(FaceOf(piece.Run)), size, x, baseline, piece.Text, color);
+                if ((it.Underline || piece.Run.Underline) && piece.Text.Trim().Length > 0)
+                    g.Line(x, baseline + size * 0.12, x + piece.Width, baseline + size * 0.12, color, thickness);
+                if (piece.Run.Strike && piece.Text.Trim().Length > 0)
+                    g.Line(x, baseline - size * 0.3, x + piece.Width, baseline - size * 0.3, color, thickness);
+                x += piece.Width;
+            }
+            top += line.Height;
         }
     }
 

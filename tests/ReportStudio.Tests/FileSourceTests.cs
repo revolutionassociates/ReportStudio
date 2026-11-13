@@ -282,6 +282,35 @@ public sealed class FileSourceTests : IDisposable
         Assert.Throws<SourceException>(() => ExcelSource.Read(new MemoryStream(Encoding.UTF8.GetBytes("this is not a zip")), null, true));
     }
 
+    // ---- field detection (the designer's "Test and load fields") ----
+
+    [Fact]
+    public void Detected_fields_get_a_type_from_their_values_and_mixed_or_empty_ones_are_Text()
+    {
+        Write("t.csv", "Name,Qty,When,Active,Mixed,Empty\nAsha,2,2026-11-09,true,1,\nRavi,3,2026-11-10,false,x,\n");
+        var ds = new DataSourceDefinition { Provider = DbProvider.Csv, Source = "t.csv" };
+
+        var fields = DataLoader.DetectFields(ds, new SourceSettings { BaseDirectory = _dir });
+
+        Assert.Equal(new[] { "Name:Text", "Qty:Number", "When:Date", "Active:Boolean", "Mixed:Text", "Empty:Text" },
+            fields.Select(f => f.ToString()).ToArray());
+    }
+
+    [Fact]
+    public void Field_detection_lists_a_field_that_only_some_rows_have_and_keeps_the_order_of_first_appearance()
+    {
+        var rows = new List<Dictionary<string, object?>>
+        {
+            new() { ["A"] = 1m },
+            new() { ["B"] = "x", ["A"] = null },
+            new() { ["C"] = new DateTime(2026, 11, 9), ["A"] = 2m }
+        };
+
+        var fields = FieldSampler.Infer(rows);
+
+        Assert.Equal(new[] { "A:Number", "B:Text", "C:Date" }, fields.Select(f => f.ToString()).ToArray());
+    }
+
     // ---- paths and the loader ----
 
     [Fact]

@@ -18,6 +18,12 @@ public sealed class SourceSettings
 
     /// <summary>Network paths (\\server\share) can leak the user's Windows credentials to whoever writes the path, so they are refused unless allowed.</summary>
     public bool AllowNetworkPaths { get; init; }
+
+    /// <summary>Which kinds of source may be read at all, and the web rules. Everything is allowed unless the host says otherwise.</summary>
+    public SourceAccess Access { get; init; } = new();
+
+    /// <summary>Where rows are kept for the sources that ask for it (CacheSeconds). Null = nothing is kept.</summary>
+    public DataCache? Cache { get; init; }
 }
 
 /// <summary>Reads the rows of a JSON, XML, CSV or Excel file (requirement 40).</summary>
@@ -39,12 +45,17 @@ public static class FileSourceLoader
         return names;
     }
 
+    /// <summary>The first rows of the file (for finding field names and types).</summary>
+    public static List<Row> Sample(DataSourceDefinition ds, SourceSettings settings) =>
+        Read(ds, settings, SampleRows, stopAtLimit: true).Take(SampleRows).ToList();
+
     /// <summary>Checks the file can be found and read; throws a message the user can act on.</summary>
     public static void Test(DataSourceDefinition ds, SourceSettings settings) => Read(ds, settings, 1, stopAtLimit: true);
 
     private static List<Row> Read(DataSourceDefinition ds, SourceSettings settings, int maxRows, bool stopAtLimit)
     {
         if (!ds.Provider.IsFile()) throw new InvalidOperationException($"{ds.Provider} is not a file source.");
+        if (!settings.Access.AllowFileSources) throw new SourceException(SourceAccess.FilesOffMessage);
         var path = ResolvePath(ds.Source, settings);
 
         try

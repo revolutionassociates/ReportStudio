@@ -11,9 +11,20 @@ public static class UntrustedFileGuard
     private const int MaxQueryChars = 600;
 
     /// <summary>Returns true when the report may run (no own query, or the user agreed).</summary>
-    public static bool Confirm(IWin32Window? owner, ReportDefinition definition, string? path)
+    public static bool Confirm(IWin32Window? owner, ReportDefinition definition, string? path,
+        bool allowFileSources = true, bool allowWebSources = true)
     {
         if (!definition.HasOwnQuery) return true;
+
+        // A kind of source this program does not allow is not asked about: it would be refused anyway, so say so at once.
+        var refused = (definition.UsesFileSources && !allowFileSources ? ReportStudio.Core.Data.Sources.SourceAccess.FilesOffMessage : null)
+                      ?? (definition.UsesWebSources && !allowWebSources ? ReportStudio.Core.Data.Sources.SourceAccess.WebOffMessage : null);
+        if (refused != null)
+        {
+            MessageBox.Show(owner, refused + "\n\n(The standalone viewer allows them when started with --allow-data-files or --allow-web-data.)",
+                "This report cannot be run here", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return false;
+        }
 
         var ds = definition.DataSource;
         var query = ds.ReadsExternalData ? ds.DescribeForTrust(MaxQueryChars) : "";
