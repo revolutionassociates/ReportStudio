@@ -17,13 +17,19 @@ public sealed class ReportSettingsDialog : Form
     private readonly TextBox _connection = new() { Dock = DockStyle.Fill };
     private readonly TextBox _query = new()
     {
-        Multiline = true, ScrollBars = ScrollBars.Both, WordWrap = false, Dock = DockStyle.Fill,
+        Multiline = true,
+        ScrollBars = ScrollBars.Both,
+        WordWrap = false,
+        Dock = DockStyle.Fill,
         Font = new Font("Consolas", 10f)
     };
     private readonly NumericUpDown _timeout = new() { Minimum = 5, Maximum = 3600, Value = 60, Width = 80 };
     private readonly TextBox _fields = new()
     {
-        Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Font = new Font("Consolas", 10f)
+        Multiline = true,
+        ScrollBars = ScrollBars.Vertical,
+        Dock = DockStyle.Fill,
+        Font = new Font("Consolas", 10f)
     };
 
     // data source: files and web addresses (requirement 40)
@@ -35,7 +41,11 @@ public sealed class ReportSettingsDialog : Form
     private readonly CheckBox _hasHeader = new() { Text = "The first row holds the field names", AutoSize = true, Checked = true };
     private readonly TextBox _headers = new()
     {
-        Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, Height = 56, Font = new Font("Consolas", 10f)
+        Multiline = true,
+        ScrollBars = ScrollBars.Vertical,
+        Dock = DockStyle.Fill,
+        Height = 56,
+        Font = new Font("Consolas", 10f)
     };
     private readonly Label _queryHint = new() { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 4), MaximumSize = new Size(690, 0) };
     private Label _sourceLabel = new(), _selectorLabel = new();
@@ -122,7 +132,10 @@ public sealed class ReportSettingsDialog : Form
         ok.Click += (_, _) => { if (Apply()) DialogResult = DialogResult.OK; };
         var buttons = new FlowLayoutPanel
         {
-            Dock = DockStyle.Bottom, FlowDirection = FlowDirection.RightToLeft, Height = 44, Padding = new Padding(8)
+            Dock = DockStyle.Bottom,
+            FlowDirection = FlowDirection.RightToLeft,
+            Height = 44,
+            Padding = new Padding(8)
         };
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(ok);
@@ -200,7 +213,10 @@ public sealed class ReportSettingsDialog : Form
 
         var hint = new Label
         {
-            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 10, 0, 0), MaximumSize = new Size(680, 0),
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(0, 10, 0, 0),
+            MaximumSize = new Size(680, 0),
             Text = "The page colour fills the whole page behind everything else; add a gradient colour to fade from the page colour to it. " +
                    "Leave the page colour empty for a plain page. " +
                    "The watermark is faint text behind the content of every page, such as DRAFT or CONFIDENTIAL. " +
@@ -258,7 +274,9 @@ public sealed class ReportSettingsDialog : Form
         fieldsPanel.Controls.Add(_fields);
         fieldsPanel.Controls.Add(new Label
         {
-            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 4),
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 4),
             Text = "Fields the report uses, one per line as Name:Type (Text, Number, Date, Boolean) — fills the field list without a database:"
         });
 
@@ -276,8 +294,11 @@ public sealed class ReportSettingsDialog : Form
         _params.Columns.Add("Prompt", "Prompt shown to the user");
         _params.Columns.Add(new DataGridViewComboBoxColumn
         {
-            Name = "Type", HeaderText = "Type", ValueType = typeof(ParameterType),
-            DataSource = Enum.GetValues<ParameterType>(), FlatStyle = FlatStyle.Flat
+            Name = "Type",
+            HeaderText = "Type",
+            ValueType = typeof(ParameterType),
+            DataSource = Enum.GetValues<ParameterType>(),
+            FlatStyle = FlatStyle.Flat
         });
         _params.Columns.Add("Default", "Default value (start with = for an expression, e.g. =MonthStart(Today()))");
         _params.Columns.Add("Choices", "Drop-down list: A;B;C or Code=Text;...");
@@ -287,7 +308,9 @@ public sealed class ReportSettingsDialog : Form
         page.Controls.Add(_params);
         page.Controls.Add(new Label
         {
-            Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 0, 0, 6),
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            Padding = new Padding(0, 0, 0, 6),
             Text = "Use a parameter in the SQL as @Name and on the report as {@Name}. Dates are yyyy-MM-dd. " +
                    "\"Pick several\" gives a list: SQL  WHERE Dept IN (@Name)  or an expression  In(Dept, @Name)."
         });
@@ -313,7 +336,8 @@ public sealed class ReportSettingsDialog : Form
         var setBox = new GroupBox
         {
             Text = "Data sets. Host = the application supplies the rows under this name. Sample = the built-in sample rows.",
-            Dock = DockStyle.Top, Height = 200
+            Dock = DockStyle.Top,
+            Height = 200
         };
         setBox.Controls.Add(_dataSets);
 
@@ -355,7 +379,8 @@ public sealed class ReportSettingsDialog : Form
         var groupBox = new GroupBox
         {
             Text = "Groups (outermost first). Each group has its own header and footer band.",
-            Dock = DockStyle.Top, Height = 230
+            Dock = DockStyle.Top,
+            Height = 230
         };
         groupBox.Controls.Add(_groups);
 
@@ -374,28 +399,37 @@ public sealed class ReportSettingsDialog : Form
         _vars.Columns.Add("Name", "Name");
         _vars.Columns.Add(new DataGridViewComboBoxColumn
         {
-            Name = "Function", HeaderText = "What it does", ValueType = typeof(VariableFunction),
-            DataSource = Enum.GetValues<VariableFunction>(), FlatStyle = FlatStyle.Flat
+            Name = "Function",
+            HeaderText = "What it does",
+            ValueType = typeof(VariableFunction),
+            DataSource = Enum.GetValues<VariableFunction>(),
+            FlatStyle = FlatStyle.Flat
         });
         _vars.Columns.Add("Expression", "Value of each row");
         _vars.Columns.Add("Condition", "Only rows where (optional)");
         _vars.Columns.Add("Initial", "Start value (optional)");
         _vars.Columns.Add(new DataGridViewComboBoxColumn
         {
-            Name = "Reset", HeaderText = "Start again on", ValueType = typeof(VariableReset),
-            DataSource = Enum.GetValues<VariableReset>(), FlatStyle = FlatStyle.Flat
+            Name = "Reset",
+            HeaderText = "Start again on",
+            ValueType = typeof(VariableReset),
+            DataSource = Enum.GetValues<VariableReset>(),
+            FlatStyle = FlatStyle.Flat
         });
         _vars.Columns.Add("ResetGroup", "Group level");
 
         var varBox = new GroupBox
         {
             Text = "Variables: running totals and shared values, shown anywhere as {Name}",
-            Dock = DockStyle.Fill, Padding = new Padding(6)
+            Dock = DockStyle.Fill,
+            Padding = new Padding(6)
         };
         varBox.Controls.Add(_vars);
         varBox.Controls.Add(new Label
         {
-            Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 6, 0, 0),
+            Dock = DockStyle.Bottom,
+            AutoSize = true,
+            Padding = new Padding(0, 6, 0, 0),
             Text = "Examples: RunningTotal = Sum of Amount.  Balance = Assign \"Balance + Credit - Debit\".  " +
                    "Group level 1 is the outermost group; it only matters when 'Start again on' is Group."
         });
@@ -403,7 +437,9 @@ public sealed class ReportSettingsDialog : Form
         var filterBox = new GroupBox
         {
             Text = "Record filter: only rows where this is true are used (empty = all rows)",
-            Dock = DockStyle.Top, Height = 92, Padding = new Padding(8, 6, 8, 6)
+            Dock = DockStyle.Top,
+            Height = 92,
+            Padding = new Padding(8, 6, 8, 6)
         };
         var filterRow = new Panel { Dock = DockStyle.Top, Height = 26 };
         _filter.Dock = DockStyle.Fill;
@@ -702,46 +738,49 @@ public sealed class ReportSettingsDialog : Form
             g.Collapsible = rows[i].Cells[3].Value is true;
             g.StartCollapsed = rows[i].Cells[4].Value is true;
             var chosen = Convert.ToString(rows[i].Cells[5].Value) ?? SameAsReport;
-            var size = Array.FindIndex(PageSizes, p => p.Label == chosen);
-            if (size >= 0) { g.PageWidth = PageSizes[size].W; g.PageHeight = PageSizes[size].H; }
+            var sizeIndex = Array.FindIndex(PageSizes, p => p.Label == chosen);
+            if (sizeIndex >= 0) { g.PageWidth = PageSizes[sizeIndex].W; g.PageHeight = PageSizes[sizeIndex].H; }
             else if (chosen != CustomPage) { g.PageWidth = 0; g.PageHeight = 0; }      // custom: keep what the file has
             g.PageSizeWhen = (Convert.ToString(rows[i].Cells[6].Value) ?? "").Trim();
             groups.Add(g);
         }
         _def.Groups = groups;
 
-        string Text(DataGridViewRow row, int cell) => (Convert.ToString(row.Cells[cell].Value) ?? "").Trim();
+        string CellText(DataGridViewRow row, int cell) => (Convert.ToString(row.Cells[cell].Value) ?? "").Trim();
         _def.DataSets = _dataSets.Rows.Cast<DataGridViewRow>()
-            .Where(r => !r.IsNewRow && Text(r, 0).Length > 0)
+            .Where(r => !r.IsNewRow && CellText(r, 0).Length > 0)
             .Select(r =>
             {
-                var dsProvider = Enum.TryParse<DbProvider>(Text(r, 1), out var parsedProvider) ? parsedProvider : DbProvider.Host;
+                var dsProvider = Enum.TryParse<DbProvider>(CellText(r, 1), out var parsedProvider) ? parsedProvider : DbProvider.Host;
                 var dsKept = r.Tag as DataSourceDefinition;
                 bool dsFile = dsProvider.IsFile(), dsWeb = dsProvider.IsWeb(), dsOutside = dsFile || dsWeb;
                 return new DataSetDefinition
                 {
-                    Name = Text(r, 0),
+                    Name = CellText(r, 0),
                     DataSource = new DataSourceDefinition
                     {
                         Provider = dsProvider,
-                        ConnectionString = dsOutside ? "" : Text(r, 2),
-                        Query = dsOutside ? "" : Text(r, 3),
-                        Source = dsOutside ? Text(r, 4) : "",
-                        Selector = dsOutside && dsProvider != DbProvider.Csv ? Text(r, 5) : "",
-                        Headers = dsWeb ? CellToHeaders(Text(r, 6)) : "",
+                        ConnectionString = dsOutside ? "" : CellText(r, 2),
+                        Query = dsOutside ? "" : CellText(r, 3),
+                        Source = dsOutside ? CellText(r, 4) : "",
+                        Selector = dsOutside && dsProvider != DbProvider.Csv ? CellText(r, 5) : "",
+                        Headers = dsWeb ? CellToHeaders(CellText(r, 6)) : "",
                         Delimiter = dsFile && dsProvider == DbProvider.Csv ? dsKept?.Delimiter ?? "" : "",
                         HasHeaderRow = dsKept?.HasHeaderRow ?? true,
                         CacheSeconds = (dsProvider is DbProvider.Sample or DbProvider.Host)
-                            ? 0 : int.TryParse(Text(r, 7), out var dsSeconds) ? Math.Clamp(dsSeconds, 0, DataCache.MaxSeconds) : 0
+                            ? 0 : int.TryParse(CellText(r, 7), out var dsSeconds) ? Math.Clamp(dsSeconds, 0, DataCache.MaxSeconds) : 0
                     }
                 };
             }).ToList();
         _def.Joins = _joins.Rows.Cast<DataGridViewRow>()
-            .Where(r => !r.IsNewRow && Text(r, 0).Length > 0)
+            .Where(r => !r.IsNewRow && CellText(r, 0).Length > 0)
             .Select(r => new JoinDefinition
             {
-                DataSet = Text(r, 0), LeftField = Text(r, 1), RightField = Text(r, 2),
-                Kind = Enum.TryParse<JoinKind>(Text(r, 3), out var parsedKind) ? parsedKind : JoinKind.Left, Prefix = Text(r, 4)
+                DataSet = CellText(r, 0),
+                LeftField = CellText(r, 1),
+                RightField = CellText(r, 2),
+                Kind = Enum.TryParse<JoinKind>(CellText(r, 3), out var parsedKind) ? parsedKind : JoinKind.Left,
+                Prefix = CellText(r, 4)
             }).ToList();
         _def.SortBy = _sort.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
         _def.Normalize();
@@ -937,9 +976,13 @@ public sealed class ReportSettingsDialog : Form
 
     private static DataGridView NewGrid() => new()
     {
-        Dock = DockStyle.Fill, AllowUserToAddRows = true, AllowUserToDeleteRows = true,
-        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill, RowHeadersVisible = false,
-        BackgroundColor = SystemColors.Window, BorderStyle = BorderStyle.FixedSingle
+        Dock = DockStyle.Fill,
+        AllowUserToAddRows = true,
+        AllowUserToDeleteRows = true,
+        AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill,
+        RowHeadersVisible = false,
+        BackgroundColor = SystemColors.Window,
+        BorderStyle = BorderStyle.FixedSingle
     };
 
     private static NumericUpDown NewMargin() => new() { Minimum = 0, Maximum = 400, DecimalPlaces = 1, Width = 80 };

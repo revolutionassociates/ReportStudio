@@ -99,8 +99,10 @@ public static class GdiPageRenderer
             var state = g.Save();
             g.TranslateTransform((float)page.Width / 2, (float)page.Height / 2);
             g.RotateTransform((float)-wm.Angle);                            // GDI+ turns clockwise; the setting turns counter-clockwise
-            g.DrawImage(img, new RectangleF((float)(-w / 2), (float)(-h / 2), (float)w, (float)h),
-                new RectangleF(0, 0, img.Width, img.Height), GraphicsUnit.Pixel, attributes);
+            // The overload that takes ImageAttributes wants three corners (top-left, top-right, bottom-left) of the target.
+            float left = (float)(-w / 2), top = (float)(-h / 2);
+            var corners = new[] { new PointF(left, top), new PointF(left + (float)w, top), new PointF(left, top + (float)h) };
+            g.DrawImage(img, corners, new RectangleF(0, 0, img.Width, img.Height), GraphicsUnit.Pixel, attributes);
             g.Restore(state);
         }
         catch (ArgumentException) { /* unreadable picture: leave it out */ }

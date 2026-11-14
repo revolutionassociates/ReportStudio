@@ -164,7 +164,12 @@ internal sealed class PdfDocument
         if (archive && options!.NeedsEncryption)
             throw new InvalidOperationException("A PDF/A file cannot be encrypted: remove the passwords and restrictions, or do not ask for PDF/A.");
 
+        var certificate = options?.SignWith;
+        if (certificate != null && options!.NeedsEncryption)
+            throw new InvalidOperationException("A signed PDF cannot also be encrypted: remove the passwords and restrictions, or do not sign.");
+
         if (_pages.Count == 0) AddPage(794, 1123);               // a PDF needs at least one page
+        var stamp = (options?.CreationTime ?? DateTime.UtcNow).ToUniversalTime();
 
         var file = new PdfFile();
         if (archive) file.Version = "1.7";
@@ -204,6 +209,7 @@ internal sealed class PdfDocument
         var resourcesRef = file.Add(resources);
 
         var pageRefs = _pages.Select(_ => file.Reserve()).ToList();   // links may point to a later page
+        int signatureField = certificate != null ? PdfSignature.AddField(file, pageRefs[0], options!, stamp) : 0;
         var kids = new PdfArray();
         for (int index = 0; index < _pages.Count; index++)
         {
@@ -243,6 +249,7 @@ internal sealed class PdfDocument
                 else continue;   // a link to a bookmark that does not exist is not made clickable
                 annots.Add(new PdfRef(file.Add(annot)));
             }
+            if (index == 0 && signatureField != 0) annots.Add(new PdfRef(signatureField));   // the (invisible) signature field sits on page 1
             if (annots.Items.Count > 0) pageDict.Put("Annots", annots);
 
             file.Set(pageRefs[index], pageDict);
@@ -260,7 +267,8 @@ internal sealed class PdfDocument
         if (outlineRoot != 0)
             catalog.Put("Outlines", new PdfRef(outlineRoot)).PutName("PageMode", "UseOutlines");
         if (Tagged) WriteStructure(file, catalog, pageRefs, options?.Language);
-        var stamp = (options?.CreationTime ?? DateTime.UtcNow).ToUniversalTime();
+        if (signatureField != 0)   // SigFlags 3: the file holds signatures and must be saved by appending
+            catalog.Put("AcroForm", new PdfDict().Put("Fields", new PdfArray().Add(new PdfRef(signatureField))).Put("SigFlags", 3));
         if (archive) WriteArchiveParts(file, catalog, stamp);
         file.Set(file.Catalog, catalog);
 
@@ -272,7 +280,17 @@ internal sealed class PdfDocument
             info.Put("CreationDate", PdfString.Text(PdfXmp.InfoDate(stamp))).Put("ModDate", PdfString.Text(PdfXmp.InfoDate(stamp)));
         file.Info = file.Add(info);
 
-        file.Save(stream, options);
+        if (certificate == null)
+        {
+            file.Save(stream, options);
+            return;
+        }
+
+        // A signature covers the finished bytes, so the file is written to memory, signed, and then handed on.
+        using var buffer = new MemoryStream();
+        file.Save(buffer, options);
+        var signed = PdfSignature.Sign(buffer.ToArray(), certificate, stamp);
+        stream.Write(signed, 0, signed.Length);
     }
 
     /// <summary>

@@ -26,7 +26,7 @@ internal sealed class MainForm : Form
     private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
 
     /// <summary>The folder of the open report file (null for a report not yet saved): a data file named without a folder is looked up here.</summary>
-    private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
+    ///private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
     private bool _dirty;
     private bool _dbTrusted = true;
     private Dictionary<string, string?> _lastParameters = new();
