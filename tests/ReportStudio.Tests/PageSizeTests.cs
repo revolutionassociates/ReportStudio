@@ -26,8 +26,15 @@ public class PageSizeTests
         return def;
     }
 
-    private static GroupDefinition Group(string expression, bool newPage = true, double w = 0, double h = 0, string when = "") =>
-        new() { Expression = expression, StartNewPage = newPage, PageWidth = w, PageHeight = h, PageSizeWhen = when };
+    // The group's header and footer are empty and 0 high: a group band of the default height would count as page content, so an inner
+    // group that starts a new page would break right after its outer group's header and leave extra pages.
+    private static GroupDefinition Group(string expression, bool newPage = true, double w = 0, double h = 0, string when = "")
+    {
+        var group = new GroupDefinition { Expression = expression, StartNewPage = newPage, PageWidth = w, PageHeight = h, PageSizeWhen = when };
+        group.Header.Height = 0;
+        group.Footer.Height = 0;
+        return group;
+    }
 
     private static ReportResult Run(ReportDefinition def, params (string Sec, string Sub)[] rows) =>
         ReportEngine.Run(def, null,
