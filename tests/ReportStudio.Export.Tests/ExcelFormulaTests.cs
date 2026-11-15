@@ -62,17 +62,17 @@ public class ExcelFormulaTests
         using var ms = new MemoryStream(xlsx);
         using var doc = SpreadsheetDocument.Open(ms, false);
         var book = doc.WorkbookPart!;
-        var entry = book.Workbook.Descendants<Sheet>().First(s => s.Name == sheet);
+        var entry = book.Workbook!.Descendants<Sheet>().First(s => s.Name == sheet);
         var part = (WorksheetPart)book.GetPartById(entry.Id!.Value!);
         // A copy, so it can be read after the package is closed.
-        return (Cell)part.Worksheet.Descendants<Cell>().First(c => c.CellReference == reference).CloneNode(true);
+        return (Cell)part.Worksheet!.Descendants<Cell>().First(c => c.CellReference == reference).CloneNode(true);
     }
 
     private static List<string> SheetNames(byte[] xlsx)
     {
         using var ms = new MemoryStream(xlsx);
         using var doc = SpreadsheetDocument.Open(ms, false);
-        return doc.WorkbookPart!.Workbook.Descendants<Sheet>().Select(s => s.Name!.Value!).ToList();
+        return doc.WorkbookPart!.Workbook!.Descendants<Sheet>().Select(s => s.Name!.Value!).ToList();
     }
 
     [Fact]

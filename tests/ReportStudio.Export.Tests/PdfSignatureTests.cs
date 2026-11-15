@@ -102,7 +102,7 @@ public class PdfSignatureTests
         var cms = Decode(Split(Make(new PdfOptions { SignWith = certificate })));
 
         cms.CheckSignature(verifySignatureOnly: true);          // throws when the signature does not match the bytes
-        var signer = Assert.Single(cms.SignerInfos);
+        var signer = Assert.Single(cms.SignerInfos.Cast<SignerInfo>());
         Assert.Equal(certificate.Thumbprint, signer.Certificate!.Thumbprint);
     }
 
