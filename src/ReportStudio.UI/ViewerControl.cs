@@ -54,6 +54,9 @@ public sealed class ViewerControl : UserControl
         AddExport("Excel workbook, one sheet per outer group", ".xlsx",
             path => ExcelExporter.Export(_result!, path, null, new ExcelOptions { SheetPerGroupLevel = 1 }));
         AddExport("Word document", ".docx", path => WordExporter.Export(_result!, path));
+        AddExport("Rich Text (RTF)", ".rtf", path => RtfExporter.Export(_result!, path));
+        AddExport("OpenDocument text", ".odt", path => OdfExporter.ExportText(_result!, path));
+        AddExport("OpenDocument spreadsheet", ".ods", path => OdfExporter.ExportSpreadsheet(_result!, path));
         _export.DropDownItems.Add(new ToolStripSeparator());
         AddImageExport("PNG image", ImageFormatKind.Png);
         AddImageExport("JPEG image", ImageFormatKind.Jpeg);
