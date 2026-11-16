@@ -30,7 +30,12 @@ public class OdfExporterTests
 
     private static RenderedItem Item(double x, double y, string text, double width = 100) => new()
     {
-        Kind = ItemKind.Text, X = x, Y = y, Width = width, Height = 18, Text = text
+        Kind = ItemKind.Text,
+        X = x,
+        Y = y,
+        Width = width,
+        Height = 18,
+        Text = text
     };
 
     private static byte[] Odt(ReportResult report)
@@ -163,7 +168,7 @@ public class OdfExporterTests
     {
         var doc = Content(Odt(One(794, 1123, Item(40, 20, "1,250.50"))));
 
-        Assert.Empty(doc.Descendants().Where(e => e.Attribute(NsOffice + "value-type") != null));
+        Assert.DoesNotContain(doc.Descendants(), e => e.Attribute(NsOffice + "value-type") != null);
     }
 
     [Fact]

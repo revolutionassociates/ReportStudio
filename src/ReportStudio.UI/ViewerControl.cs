@@ -57,6 +57,8 @@ public sealed class ViewerControl : UserControl
         AddExport("Rich Text (RTF)", ".rtf", path => RtfExporter.Export(_result!, path));
         AddExport("OpenDocument text", ".odt", path => OdfExporter.ExportText(_result!, path));
         AddExport("OpenDocument spreadsheet", ".ods", path => OdfExporter.ExportSpreadsheet(_result!, path));
+        AddExport("PowerPoint presentation", ".pptx", path => PptxExporter.Export(_result!, path));
+        AddExport("XPS document", ".xps", path => XpsExporter.Export(_result!, path));
         _export.DropDownItems.Add(new ToolStripSeparator());
         AddImageExport("PNG image", ImageFormatKind.Png);
         AddImageExport("JPEG image", ImageFormatKind.Jpeg);
