@@ -61,7 +61,9 @@ public static class XpsExporter
                 AddText(zip, $"Documents/1/Pages/{n}.fpage", FixedPage(n, w, h));
                 AddText(zip, $"Documents/1/Pages/_rels/{n}.fpage.rels", PageRels(n));
 
-                using var bmp = ImageExporter.RenderPage(page, dpi);
+                // A page without a size cannot be drawn (GDI+ refuses a bitmap of no size): it is written as a blank page of the fallback size.
+                var drawn = page.Width > 0 && page.Height > 0 ? page : new RenderedPage { Number = page.Number, Width = w, Height = h };
+                using var bmp = ImageExporter.RenderPage(drawn, dpi);
                 using var png = new MemoryStream();
                 bmp.Save(png, ImageFormat.Png);
                 // A PNG is already compressed.

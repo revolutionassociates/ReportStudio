@@ -404,7 +404,8 @@ public class ReportWizardTests
     public void Grouping_by_every_field_leaves_no_column()
     {
         var o = Basic();
-        o.GroupBy = new List<string> { "Dept", "Name", "Amount", "Joined" };
+        o.Fields = FieldDefinition.ParseLines(new[] { "Dept", "Name", "Amount:Number" });
+        o.GroupBy = new List<string> { "Dept", "Name", "Amount" };
 
         Assert.Contains(ReportWizard.Check(o), p => p.Contains("column"));
     }
@@ -571,8 +572,13 @@ public class ReportWizardTests
         Dictionary<string, object?> Line(string code, string who, string component, decimal amount) =>
             new(StringComparer.OrdinalIgnoreCase)
             {
-                ["EmployeeCode"] = code, ["EmployeeName"] = who, ["Department"] = "Accounts", ["Designation"] = "Clerk",
-                ["PayPeriod"] = "October 2026", ["Component"] = component, ["Amount"] = amount
+                ["EmployeeCode"] = code,
+                ["EmployeeName"] = who,
+                ["Department"] = "Accounts",
+                ["Designation"] = "Clerk",
+                ["PayPeriod"] = "October 2026",
+                ["Component"] = component,
+                ["Amount"] = amount
             };
 
         var result = Run(def, new[]
@@ -594,8 +600,12 @@ public class ReportWizardTests
         var def = ReportTemplates.Find(ReportTemplates.AddressLabels)!.Create();
         Dictionary<string, object?> Label(int n) => new(StringComparer.OrdinalIgnoreCase)
         {
-            ["Name"] = "Person " + n, ["AddressLine1"] = "1 Main Road", ["AddressLine2"] = "Near the park",
-            ["City"] = "Pune", ["State"] = "Maharashtra", ["Pincode"] = "411001"
+            ["Name"] = "Person " + n,
+            ["AddressLine1"] = "1 Main Road",
+            ["AddressLine2"] = "Near the park",
+            ["City"] = "Pune",
+            ["State"] = "Maharashtra",
+            ["Pincode"] = "411001"
         };
 
         var oneSheet = Run(def, Enumerable.Range(1, 21).Select(Label));
