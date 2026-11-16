@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Xml.Linq;
 using ReportStudio.Core.Layout;
+using ReportStudio.Core.Model;
 using ReportStudio.Export;
 using Xunit;
 
@@ -19,7 +20,14 @@ public class XpsExporterTests
         var page = new RenderedPage { Number = number, Width = width, Height = height };
         page.Items.Add(new RenderedItem
         {
-            Kind = ItemKind.Text, X = 10, Y = 20, Width = 200, Height = 30, Text = "Hello", FontSize = 10, FontFamily = "Arial"
+            Kind = ItemKind.Text,
+            X = 10,
+            Y = 20,
+            Width = 200,
+            Height = 30,
+            Text = "Hello",
+            FontSize = 10,
+            FontFamily = "Arial"
         });
         return page;
     }
