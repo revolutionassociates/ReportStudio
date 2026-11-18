@@ -110,6 +110,7 @@ public static class ItemArrange
         to.GradientColor = from.GradientColor;
         to.GradientDirection = from.GradientDirection;
         to.Format = from.Format;
+        to.Style = from.Style;
     }
 
     // ---- alignment guides ----

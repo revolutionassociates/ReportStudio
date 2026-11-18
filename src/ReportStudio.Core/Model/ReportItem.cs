@@ -138,6 +138,10 @@ public class ReportItem
 
     [Category("Appearance")] public double BorderWidth { get; set; }
 
+    [Category("Appearance"), DisplayName("Style"),
+     Description("The name of a style of this report (Report settings > Styles). Every value the style sets replaces this element's own, so changing the style changes all elements that use it. Empty = no style.")]
+    public string Style { get; set; } = "";
+
     [Category("Appearance"), Description("Rounds the corners of a box (Kind = Rectangle), in pixels. 0 = square corners. A value larger than half the shorter side makes the ends fully round.")]
     public double CornerRadius { get; set; }
 

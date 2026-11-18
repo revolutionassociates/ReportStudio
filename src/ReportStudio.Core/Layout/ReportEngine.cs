@@ -83,6 +83,10 @@ public static class ReportEngine
         options ??= new ReportOptions();
         def.Normalize();
 
+        // Elements that name a style take its values before anything is laid out (the report passed in is not changed).
+        var styleWarnings = StyleResolver.Warnings(def);
+        def = StyleResolver.Resolve(def);
+
         var parameters = ResolveParameters(def, parameterValues);
         var filterWarnings = new List<string>();
         var catalog = BuildCatalog(def, options, parameters);
@@ -107,6 +111,7 @@ public static class ReportEngine
         var result = new Layouter(def, rows, parameters, options, totals, first.FindOutline()).Run();
         result.AssignOutlineBookmarks();
         result.Warnings.InsertRange(0, filterWarnings);
+        result.Warnings.InsertRange(0, styleWarnings);
         return result;
     }
 

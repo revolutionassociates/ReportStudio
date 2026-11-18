@@ -44,6 +44,9 @@ public class ReportDefinition
     /// <summary>Running totals and shared values, updated as detail rows print and shown as {Name} in any band.</summary>
     public List<VariableDefinition> Variables { get; set; } = new();
 
+    /// <summary>Named looks (requirement 46) that elements share by naming them in <see cref="ReportItem.Style"/>.</summary>
+    public List<StyleDefinition> Styles { get; set; } = new();
+
     public Band ReportHeader { get; set; } = new() { Kind = BandKind.ReportHeader, Height = 60 };
     public Band PageHeader { get; set; } = new() { Kind = BandKind.PageHeader, Height = 30 };
     public Band Detail { get; set; } = new() { Kind = BandKind.Detail, Height = 22 };
