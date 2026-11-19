@@ -8,7 +8,6 @@ public sealed class NamePromptDialog : Form
 
     public NamePromptDialog(string title, string prompt, string initial = "")
     {
-        Load += (_, _) => DesignerUi.Apply(this);
         Text = title;
         Size = new Size(420, 170);
         StartPosition = FormStartPosition.CenterParent;

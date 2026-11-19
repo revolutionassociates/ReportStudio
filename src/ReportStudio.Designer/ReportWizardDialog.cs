@@ -18,7 +18,11 @@ public sealed class ReportWizardDialog : Form
     private readonly Label _sourceLabel = new() { AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
     private readonly TextBox _fieldLines = new()
     {
-        Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill, WordWrap = false
+        Multiline = true,
+        AcceptsReturn = true,
+        ScrollBars = ScrollBars.Vertical,
+        Dock = DockStyle.Fill,
+        WordWrap = false
     };
     private readonly CheckedListBox _columns = new() { CheckOnClick = true, Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly ComboBox[] _groupBy = { NewCombo(), NewCombo(), NewCombo() };
@@ -104,7 +108,8 @@ public sealed class ReportWizardDialog : Form
         sample.Click += (_, _) => UseSample();
         var hint = new Label
         {
-            Dock = DockStyle.Top, Height = 32,
+            Dock = DockStyle.Top,
+            Height = 32,
             Text = "One field per line: Name for text, or Name:Number, Name:Date, Name:Boolean."
         };
         var dataInner = new Panel { Dock = DockStyle.Fill };
@@ -118,8 +123,8 @@ public sealed class ReportWizardDialog : Form
 
         var up = new Button { Text = "Up", Width = 70 };
         var down = new Button { Text = "Down", Width = 70 };
-        up.Click += (_, _) => Move(-1);
-        down.Click += (_, _) => Move(1);
+        up.Click += (_, _) => MoveField(-1);
+        down.Click += (_, _) => MoveField(1);
         var order = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 34, FlowDirection = FlowDirection.LeftToRight };
         order.Controls.Add(up);
         order.Controls.Add(down);
@@ -241,7 +246,7 @@ public sealed class ReportWizardDialog : Form
         Changed();
     }
 
-    private void Move(int delta)
+    private void MoveField(int delta)
     {
         int from = _columns.SelectedIndex, to = from + delta;
         if (from < 0 || to < 0 || to >= _columns.Items.Count) return;

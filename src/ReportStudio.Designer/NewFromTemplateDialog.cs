@@ -19,7 +19,6 @@ public sealed class NewFromTemplateDialog : Form
     /// <param name="userFolder">The folder of the person's own templates (listed under "My templates"); null = only the built-in ones.</param>
     public NewFromTemplateDialog(string? userFolder = null)
     {
-        Load += (_, _) => DesignerUi.Apply(this);
         _userFolder = userFolder;
         Text = "New report from a template";
         Size = new Size(520, 500);
