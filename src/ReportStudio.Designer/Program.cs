@@ -7,6 +7,7 @@ internal static class Program
     {
         ReportStudio.Data.DatabaseLoader.Register();
         ApplicationConfiguration.Initialize();
+        DesignerUi.Initialize();   // colour theme and language (requirement 47)
         Application.Run(new MainForm(args.FirstOrDefault()));
     }
 }

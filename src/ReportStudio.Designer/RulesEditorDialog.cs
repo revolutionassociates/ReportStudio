@@ -24,6 +24,7 @@ public sealed class RulesEditorDialog : Form
 
     public RulesEditorDialog(IEnumerable<FormatRule> rules)
     {
+        Load += (_, _) => DesignerUi.Apply(this);
         _rules = rules.Select(r => r.Clone()).ToList();
 
         Text = "Conditional formatting";

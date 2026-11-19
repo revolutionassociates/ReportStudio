@@ -60,6 +60,37 @@ public static class StyleResolver
     }
 
     /// <summary>
+    /// The element as it looks with its style: the element itself when it has no style or names one the report does not have, otherwise a copy
+    /// with the style's values (the designer draws this; the element is not changed).
+    /// </summary>
+    public static ReportItem LookOf(ReportDefinition def, ReportItem item)
+    {
+        var effective = Effective(def, item.Style);
+        if (effective == null) return item;
+        var copy = item.Clone();
+        Apply(effective, copy);
+        return copy;
+    }
+
+    /// <summary>A style that holds the whole look of the element (font, alignment, colours, border), named <paramref name="name"/>.</summary>
+    public static StyleDefinition FromItem(ReportItem item, string name) => new()
+    {
+        Name = name.Trim(),
+        FontFamily = item.FontFamily,
+        FontSize = item.FontSize,
+        Bold = item.Bold,
+        Italic = item.Italic,
+        Underline = item.Underline,
+        HAlign = item.HAlign,
+        VAlign = item.VAlign,
+        ForeColor = item.ForeColor ?? "",
+        BackColor = item.BackColor ?? "",
+        BorderColor = item.BorderColor ?? "",
+        BorderWidth = item.BorderWidth,
+        CornerRadius = item.CornerRadius
+    };
+
+    /// <summary>
     /// The report to lay out: the report itself when no element uses a style, otherwise a copy in which every element that names an existing
     /// style has that style's values. The report that was passed in is never changed.
     /// </summary>

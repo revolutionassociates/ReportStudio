@@ -22,6 +22,8 @@ public class ReportItem
         "ReportStudio.Designer.ExpressionUiEditor, ReportStudio.Designer";
     private const string RulesEditor =
         "ReportStudio.Designer.RulesUiEditor, ReportStudio.Designer";
+    private const string StyleEditor =
+        "ReportStudio.Designer.StyleUiEditor, ReportStudio.Designer";
     private const string EditorBase =
         "System.Drawing.Design.UITypeEditor, System.Drawing";
 
@@ -138,7 +140,7 @@ public class ReportItem
 
     [Category("Appearance")] public double BorderWidth { get; set; }
 
-    [Category("Appearance"), DisplayName("Style"),
+    [Category("Appearance"), DisplayName("Style"), Editor(StyleEditor, EditorBase),
      Description("The name of a style of this report (Report settings > Styles). Every value the style sets replaces this element's own, so changing the style changes all elements that use it. Empty = no style.")]
     public string Style { get; set; } = "";
 

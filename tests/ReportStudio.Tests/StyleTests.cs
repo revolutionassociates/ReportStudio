@@ -499,4 +499,172 @@ public class StyleTests
         Assert.Throws<ArgumentNullException>(() => StyleThemes.Apply(null!, StyleThemes.All[0]));
         Assert.Throws<ArgumentNullException>(() => StyleThemes.Apply(new ReportDefinition(), null!));
     }
+
+    // ---- the look of one element (the design canvas) ----
+
+    [Fact]
+    public void The_look_of_an_element_has_the_values_of_its_style_and_the_element_is_not_changed()
+    {
+        var def = Styled();
+        var item = def.Detail.Items.Single();
+
+        var look = StyleResolver.LookOf(def, item);
+
+        Assert.NotSame(item, look);
+        Assert.True(look.Bold);
+        Assert.Equal(11, look.FontSize);
+        Assert.False(item.Bold);
+        Assert.Equal(9, item.FontSize);
+    }
+
+    [Fact]
+    public void An_element_without_a_style_or_with_a_missing_one_looks_as_it_is()
+    {
+        var def = Styled();
+        var plain = Text("a");
+        var lost = Text("b", "Gone");
+
+        Assert.Same(plain, StyleResolver.LookOf(def, plain));
+        Assert.Same(lost, StyleResolver.LookOf(def, lost));
+    }
+
+    [Fact]
+    public void A_style_made_from_an_element_gives_that_element_the_same_look()
+    {
+        var item = Text("x");
+        item.FontFamily = "Georgia";
+        item.FontSize = 13;
+        item.Bold = true;
+        item.HAlign = HAlign.Center;
+        item.ForeColor = "#112233";
+        item.BackColor = "";
+        item.BorderColor = "#445566";
+        item.BorderWidth = 2;
+        item.CornerRadius = 3;
+
+        var style = StyleResolver.FromItem(item, "  Mine ");
+        var other = Text("y");
+        StyleResolver.Apply(style, other);
+
+        Assert.Equal("Mine", style.Name);
+        Assert.Equal("Georgia", other.FontFamily);
+        Assert.Equal(13, other.FontSize);
+        Assert.True(other.Bold);
+        Assert.Equal(HAlign.Center, other.HAlign);
+        Assert.Equal("#112233", other.ForeColor);
+        Assert.Equal("", other.BackColor);
+        Assert.Equal("#445566", other.BorderColor);
+        Assert.Equal(2, other.BorderWidth);
+        Assert.Equal(3, other.CornerRadius);
+    }
+
+    // ---- the cells of the Styles grid ----
+
+    [Fact]
+    public void A_style_survives_the_trip_through_grid_cells()
+    {
+        var style = new StyleDefinition
+        {
+            Name = "Head", Parent = "Base", FontFamily = "Arial", FontSize = 12.5, Bold = true, Italic = false, HAlign = HAlign.Right,
+            VAlign = VAlign.Bottom, ForeColor = "#FFFFFF", BackColor = "", BorderWidth = 1, CornerRadius = 0
+        };
+
+        var cells = StyleCells.ToCells(style, CultureInfo.InvariantCulture);
+        var back = StyleCells.FromCells(cells, out var problem, CultureInfo.InvariantCulture)!;
+
+        Assert.Null(problem);
+        Assert.Equal(StyleCells.Columns.Count, cells.Length);
+        Assert.Equal("none", cells[StyleCells.FillColourColumn]);
+        Assert.Equal("Yes", cells[StyleCells.BoldColumn]);
+        Assert.Equal("No", cells[StyleCells.ItalicColumn]);
+        Assert.Equal("", cells[StyleCells.UnderlineColumn]);
+        Assert.Equal("Head", back.Name);
+        Assert.Equal("Base", back.Parent);
+        Assert.Equal(12.5, back.FontSize);
+        Assert.True(back.Bold);
+        Assert.False(back.Italic);
+        Assert.Null(back.Underline);
+        Assert.Equal(HAlign.Right, back.HAlign);
+        Assert.Equal(VAlign.Bottom, back.VAlign);
+        Assert.Equal("#FFFFFF", back.ForeColor);
+        Assert.Equal("", back.BackColor);
+        Assert.Null(back.BorderColor);
+        Assert.Equal(1, back.BorderWidth);
+        Assert.Equal(0, back.CornerRadius);
+    }
+
+    [Fact]
+    public void An_empty_row_is_no_style_and_no_problem()
+    {
+        Assert.Null(StyleCells.FromCells(new string?[] { "", "  ", null }, out var problem, CultureInfo.InvariantCulture));
+        Assert.Null(problem);
+        Assert.Null(StyleCells.FromCells(Array.Empty<string?>(), out problem, CultureInfo.InvariantCulture));
+        Assert.Null(problem);
+    }
+
+    [Fact]
+    public void A_short_row_counts_the_missing_cells_as_empty()
+    {
+        var style = StyleCells.FromCells(new string?[] { "Short", "", "", "10" }, out var problem, CultureInfo.InvariantCulture)!;
+
+        Assert.Null(problem);
+        Assert.Equal("Short", style.Name);
+        Assert.Equal(10, style.FontSize);
+        Assert.Null(style.Bold);
+        Assert.Null(style.ForeColor);
+    }
+
+    [Theory]
+    [InlineData(StyleCells.SizeColumn, "big", "Size 'big' is not a number")]
+    [InlineData(StyleCells.BorderWidthColumn, "x", "Border width 'x' is not a number")]
+    [InlineData(StyleCells.BoldColumn, "maybe", "Bold must be Yes, No or empty")]
+    [InlineData(StyleCells.AlignColumn, "Middle", "Align must be Left, Center, Right or empty")]
+    [InlineData(StyleCells.VerticalColumn, "Left", "Vertical must be Top, Middle, Bottom or empty")]
+    public void A_cell_that_cannot_be_understood_is_told_in_plain_words(int column, string text, string expected)
+    {
+        var cells = new string?[StyleCells.Columns.Count];
+        cells[StyleCells.NameColumn] = "S";
+        cells[column] = text;
+
+        var style = StyleCells.FromCells(cells, out var problem, CultureInfo.InvariantCulture);
+
+        Assert.Null(style);
+        Assert.Contains("Style 'S'", problem);
+        Assert.Contains(expected, problem);
+    }
+
+    [Fact]
+    public void Cells_accept_true_false_none_and_any_case()
+    {
+        var cells = new string?[StyleCells.Columns.Count];
+        cells[StyleCells.NameColumn] = "S";
+        cells[StyleCells.BoldColumn] = "TRUE";
+        cells[StyleCells.ItalicColumn] = "no";
+        cells[StyleCells.AlignColumn] = "center";
+        cells[StyleCells.FillColourColumn] = "NONE";
+        cells[StyleCells.SizeColumn] = "7";
+
+        var style = StyleCells.FromCells(cells, out var problem, CultureInfo.InvariantCulture)!;
+
+        Assert.Null(problem);
+        Assert.True(style.Bold);
+        Assert.False(style.Italic);
+        Assert.Equal(HAlign.Center, style.HAlign);
+        Assert.Equal("", style.BackColor);
+        Assert.Equal(7, style.FontSize);
+    }
+
+    [Fact]
+    public void Numbers_in_cells_follow_the_given_culture()
+    {
+        var german = new CultureInfo("de-DE");
+        var style = new StyleDefinition { Name = "S", FontSize = 10.5 };
+
+        var cells = StyleCells.ToCells(style, german);
+        var back = StyleCells.FromCells(cells, out var problem, german)!;
+
+        Assert.Equal("10,5", cells[StyleCells.SizeColumn]);
+        Assert.Null(problem);
+        Assert.Equal(10.5, back.FontSize);
+    }
 }

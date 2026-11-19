@@ -558,15 +558,16 @@ public sealed class DesignCanvas : Control
     {
         var r = ItemRect(item, box);
         bool selected = _selection.Contains(item);
+        var look = ReportStudio.Core.Model.StyleResolver.LookOf(_def, item);   // the element with its style's values (requirement 46)
 
         var ri = new RenderedItem
         {
             Kind = item.Kind, X = r.X, Y = r.Y, Width = item.Width, Height = item.Height,
-            Text = _preview?.TextFor(item) ?? item.Text, FontFamily = item.FontFamily, FontSize = item.FontSize,
-            Bold = item.Bold, Italic = item.Italic, Underline = item.Underline,
-            HAlign = item.HAlign, VAlign = item.VAlign, WordWrap = item.WordWrap,
-            ForeColor = item.ForeColor, BackColor = item.BackColor,
-            BorderColor = item.BorderColor, BorderWidth = item.BorderWidth, CornerRadius = item.CornerRadius, TextRotation = item.TextRotation,
+            Text = _preview?.TextFor(item) ?? item.Text, FontFamily = look.FontFamily, FontSize = look.FontSize,
+            Bold = look.Bold, Italic = look.Italic, Underline = look.Underline,
+            HAlign = look.HAlign, VAlign = look.VAlign, WordWrap = item.WordWrap,
+            ForeColor = look.ForeColor, BackColor = look.BackColor,
+            BorderColor = look.BorderColor, BorderWidth = look.BorderWidth, CornerRadius = look.CornerRadius, TextRotation = item.TextRotation,
             GradientColor = item.GradientColor, GradientDirection = item.GradientDirection,
             Image = DecodeImage(item),
             BarcodeType = item.BarcodeType, QrLevel = item.QrLevel, Barcode2DType = item.Barcode2DType

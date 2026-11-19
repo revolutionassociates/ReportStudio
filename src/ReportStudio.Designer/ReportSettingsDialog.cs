@@ -53,6 +53,11 @@ public sealed class ReportSettingsDialog : Form
     private readonly List<Control> _rowsDatabase = new(), _rowsSource = new(), _rowsSelector = new(), _rowsCsv = new(), _rowsHeader = new(), _rowsWeb = new(), _rowsCache = new();
     private readonly NumericUpDown _cacheSeconds = new() { Minimum = 0, Maximum = DataCache.MaxSeconds, Width = 80 };
 
+    // styles (requirement 46)
+    private readonly DataGridView _styles = NewGrid();
+    private readonly ComboBox _themes = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 160 };
+    private readonly Label _styleInfo = new() { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(0, 4, 0, 0) };
+
     // others
     private readonly DataGridView _params = NewGrid();
     private readonly DataGridView _groups = NewGrid();
@@ -109,6 +114,7 @@ public sealed class ReportSettingsDialog : Form
 
     public ReportSettingsDialog(ReportDefinition def, string? baseDirectory = null)
     {
+        Load += (_, _) => DesignerUi.Apply(this);
         _def = def;
         _baseDirectory = baseDirectory;
         Text = "Report settings";
@@ -126,6 +132,7 @@ public sealed class ReportSettingsDialog : Form
         tabs.TabPages.Add(BuildGroupsTab());
         tabs.TabPages.Add(BuildDataSetsTab());
         tabs.TabPages.Add(BuildVariablesTab());
+        tabs.TabPages.Add(BuildStylesTab());
 
         var ok = new Button { Text = "OK", Width = 90 };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 90 };
@@ -574,6 +581,7 @@ public sealed class ReportSettingsDialog : Form
         ShowFilterStatus();
         foreach (var v in _def.Variables)
             _vars.Rows.Add(v.Name, v.Function, v.Expression, v.Condition, v.Initial, v.Reset, v.ResetGroup);
+        foreach (var s in _def.Styles) _styles.Rows.Add(StyleCells.ToCells(s).Cast<object>().ToArray());
     }
 
     /// <summary>Tells how wide one column is, since the Details band has to be designed for that width.</summary>
@@ -654,6 +662,14 @@ public sealed class ReportSettingsDialog : Form
         {
             MessageBox.Show(this, string.Join(Environment.NewLine, problems.Take(8)), "Variables && filter",
                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return false;
+        }
+
+        // The styles are read and checked before anything is stored, like the variables.
+        var newStyles = ReadStyles(out var styleProblem);
+        if (styleProblem != null)
+        {
+            MessageBox.Show(this, styleProblem, "Styles", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
 
@@ -783,8 +799,109 @@ public sealed class ReportSettingsDialog : Form
                 Prefix = CellText(r, 4)
             }).ToList();
         _def.SortBy = _sort.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+        _def.Styles = newStyles;
         _def.Normalize();
         return true;
+    }
+
+    // ================================================================ styles
+
+    private TabPage BuildStylesTab()
+    {
+        var page = new TabPage("Styles") { Padding = new Padding(8) };
+
+        for (int i = 0; i < StyleCells.Columns.Count; i++)
+        {
+            var heading = StyleCells.Columns[i];
+            IReadOnlyList<string>? choices = i switch
+            {
+                StyleCells.BoldColumn or StyleCells.ItalicColumn or StyleCells.UnderlineColumn => StyleCells.YesNoChoices,
+                StyleCells.AlignColumn => StyleCells.AlignChoices,
+                StyleCells.VerticalColumn => StyleCells.VerticalChoices,
+                _ => null
+            };
+            if (choices == null) _styles.Columns.Add(heading, heading);
+            else _styles.Columns.Add(new DataGridViewComboBoxColumn
+            {
+                Name = heading, HeaderText = heading, DataSource = choices.ToList(), FlatStyle = FlatStyle.Flat, ValueType = typeof(string)
+            });
+        }
+        _styles.Columns[StyleCells.NameColumn].Width = 110;
+        _styles.Columns[StyleCells.ParentColumn].Width = 90;
+        _styles.Columns[StyleCells.FontColumn].Width = 90;
+        _styles.Columns[StyleCells.SizeColumn].Width = 50;
+        foreach (var c in new[] { StyleCells.BoldColumn, StyleCells.ItalicColumn, StyleCells.UnderlineColumn }) _styles.Columns[c].Width = 62;
+        _styles.Columns[StyleCells.AlignColumn].Width = 70;
+        _styles.Columns[StyleCells.VerticalColumn].Width = 70;
+        foreach (var c in new[] { StyleCells.TextColourColumn, StyleCells.FillColourColumn, StyleCells.BorderColourColumn }) _styles.Columns[c].Width = 80;
+        _styles.Columns[StyleCells.BorderWidthColumn].Width = 60;
+        _styles.Columns[StyleCells.CornerColumn].Width = 60;
+        _styles.DataError += (_, e) => e.ThrowException = false;   // a cell that is not in a list is read (and reported) when OK is pressed
+
+        foreach (var theme in StyleThemes.All) _themes.Items.Add(theme);
+        _themes.SelectedIndex = 0;
+        var addTheme = new Button { Text = "Add theme styles", AutoSize = true };
+        addTheme.Click += (_, _) => AddThemeStyles();
+
+        var top = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true };
+        top.Controls.Add(new Label { Text = "Theme:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+        top.Controls.Add(_themes);
+        top.Controls.Add(addTheme);
+
+        page.Controls.Add(_styles);
+        page.Controls.Add(_styleInfo);
+        page.Controls.Add(new Label
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            MaximumSize = new Size(690, 0),
+            Padding = new Padding(0, 6, 0, 6),
+            Text = "A style is a named look. Leave a cell empty to leave that value alone; \"" + StyleCells.NoColour + "\" in a colour cell means no colour. " +
+                   "\"Based on\" takes the values of another style first. Pick a style for an element in its Style property. " +
+                   "Adding theme styles replaces styles of the same name and keeps the others; elements are not changed."
+        });
+        page.Controls.Add(top);
+        return page;
+    }
+
+    /// <summary>Puts the styles of the chosen theme into the grid (replacing rows of the same name).</summary>
+    private void AddThemeStyles()
+    {
+        if (_themes.SelectedItem is not StyleTheme theme) return;
+        int changed = 0;
+        foreach (var style in theme.Create())
+        {
+            var cells = StyleCells.ToCells(style).Cast<object>().ToArray();
+            var row = _styles.Rows.Cast<DataGridViewRow>().FirstOrDefault(r => !r.IsNewRow &&
+                string.Equals((Convert.ToString(r.Cells[StyleCells.NameColumn].Value) ?? "").Trim(), style.Name, StringComparison.OrdinalIgnoreCase));
+            if (row == null) _styles.Rows.Add(cells);
+            else for (int c = 0; c < cells.Length; c++) row.Cells[c].Value = cells[c];
+            changed++;
+        }
+        _styleInfo.Text = $"{theme.Name}: {changed} styles added or replaced. Press OK to keep them.";
+    }
+
+    /// <summary>The styles of the grid. When a row cannot be understood or the set has a problem, the list is empty and the sentence is in <paramref name="problem"/>.</summary>
+    private List<StyleDefinition> ReadStyles(out string? problem)
+    {
+        problem = null;
+        var result = new List<StyleDefinition>();
+        foreach (DataGridViewRow row in _styles.Rows)
+        {
+            if (row.IsNewRow) continue;
+            var cells = row.Cells.Cast<DataGridViewCell>().Select(c => Convert.ToString(c.Value)).ToList();
+            var style = StyleCells.FromCells(cells, out var cellProblem);
+            if (cellProblem != null) { problem = cellProblem; return new(); }
+            if (style != null) result.Add(style);
+        }
+
+        // Check the whole set against the report's elements. A style that elements still use but that was deleted is allowed
+        // (those elements just keep their own look), so that problem is not reported here.
+        var probe = _def.Clone();
+        probe.Styles = result;
+        var problems = StyleResolver.Check(probe).Where(p => !p.Contains("elements use it")).ToList();
+        if (problems.Count > 0) { problem = string.Join(Environment.NewLine, problems.Take(8)); return new(); }
+        return result;
     }
 
     /// <summary>Shows only the settings that belong to the chosen provider: a database, a file, or a web address.</summary>

@@ -18,6 +18,12 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ReportStudio.Data", "src\Re
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ReportStudio.Export.Tests", "tests\ReportStudio.Export.Tests\ReportStudio.Export.Tests.csproj", "{A1000000-0000-4000-8000-000000000008}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ReportStudio.Cli", "src\ReportStudio.Cli\ReportStudio.Cli.csproj", "{A1000000-0000-4000-8000-000000000009}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ReportStudio.Web", "src\ReportStudio.Web\ReportStudio.Web.csproj", "{A1000000-0000-4000-8000-00000000000A}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ReportStudio.Web.Tests", "tests\ReportStudio.Web.Tests\ReportStudio.Web.Tests.csproj", "{A1000000-0000-4000-8000-00000000000B}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -56,5 +62,17 @@ Global
 		{A1000000-0000-4000-8000-000000000008}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{A1000000-0000-4000-8000-000000000008}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{A1000000-0000-4000-8000-000000000008}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000000-0000-4000-8000-000000000009}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000000-0000-4000-8000-000000000009}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000000-0000-4000-8000-000000000009}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000000-0000-4000-8000-000000000009}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000000-0000-4000-8000-00000000000A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000000-0000-4000-8000-00000000000A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000000-0000-4000-8000-00000000000A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000000-0000-4000-8000-00000000000A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A1000000-0000-4000-8000-00000000000B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A1000000-0000-4000-8000-00000000000B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A1000000-0000-4000-8000-00000000000B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A1000000-0000-4000-8000-00000000000B}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

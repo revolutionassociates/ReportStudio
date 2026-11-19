@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>ReportStudio.Web</RootNamespace>
+    <AssemblyName>ReportStudio.Web</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ReportStudio.Core\ReportStudio.Core.csproj" />
+    <ProjectReference Include="..\ReportStudio.Data\ReportStudio.Data.csproj" />
+  </ItemGroup>
+
+  <!-- The Excel and Word writers linked in below use the Open XML SDK, the same version as the Export project. -->
+  <ItemGroup>
+    <PackageReference Include="DocumentFormat.OpenXml" Version="3.5.1" />
+  </ItemGroup>
+
+  <!--
+    The Export project targets Windows (GDI+), so a web host cannot reference it. Two of its files use nothing but Core and are compiled in here
+    instead of being copied: the HTML writer, and the TrueType reader that gives real text widths. HtmlExporter also calls SvgRaster, which in
+    Export draws with GDI+; WebSvgRaster.cs is the small stand-in that reads picture sizes from the file headers.
+  -->
+  <ItemGroup>
+    <Compile Include="..\ReportStudio.Export\HtmlExporter.cs" Link="Linked\HtmlExporter.cs" />
+    <Compile Include="..\ReportStudio.Export\Pdf\TrueTypeFont.cs" Link="Linked\TrueTypeFont.cs" />
+    <!-- 49b: the downloads that need only Core (PDF is not here: its writer decodes pictures and shapes complex text with GDI+) -->
+    <Compile Include="..\ReportStudio.Export\GridBuilder.cs" Link="Linked\GridBuilder.cs" />
+    <Compile Include="..\ReportStudio.Export\CsvExporter.cs" Link="Linked\CsvExporter.cs" />
+    <Compile Include="..\ReportStudio.Export\ExcelExporter.cs" Link="Linked\ExcelExporter.cs" />
+    <Compile Include="..\ReportStudio.Export\ExcelFormulas.cs" Link="Linked\ExcelFormulas.cs" />
+    <Compile Include="..\ReportStudio.Export\WordExporter.cs" Link="Linked\WordExporter.cs" />
+    <Compile Include="..\ReportStudio.Export\RtfExporter.cs" Link="Linked\RtfExporter.cs" />
+    <Compile Include="..\ReportStudio.Export\OdfExporter.cs" Link="Linked\OdfExporter.cs" />
+  </ItemGroup>
+
+  <!-- Fonts in <repo>/fonts (Ubuntu-Regular.ttf etc.) are copied to the "Fonts" folder next to the program, like the other apps. -->
+  <ItemGroup>
+    <Content Include="..\..\fonts\*.ttf" Link="Fonts\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ReportStudio.Web.Tests" />
+  </ItemGroup>
+
+</Project>

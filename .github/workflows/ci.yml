@@ -42,10 +42,12 @@ jobs:
             tests/ReportStudio.Export.Tests/Golden
           if-no-files-found: ignore
 
-      - name: Publish Designer and Viewer
+      - name: Publish Designer, Viewer and command-line runner
         run: |
           dotnet publish src/ReportStudio.Designer -c Release --no-build -o out/designer
           dotnet publish src/ReportStudio.Viewer -c Release --no-build -o out/viewer
+          dotnet publish src/ReportStudio.Cli -c Release --no-build -o out/cli
+          dotnet publish src/ReportStudio.Web -c Release --no-build -o out/web
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4

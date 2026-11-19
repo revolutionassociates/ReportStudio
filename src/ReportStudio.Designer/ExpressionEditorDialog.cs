@@ -28,6 +28,7 @@ public sealed class ExpressionEditorDialog : Form
 
     public ExpressionEditorDialog(string title, string expression)
     {
+        Load += (_, _) => DesignerUi.Apply(this);
         Text = "Expression: " + title;
         Size = new Size(820, 600);
         MinimumSize = new Size(640, 480);
