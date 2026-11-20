@@ -2,6 +2,8 @@ using System.Text.Json;
 using ReportStudio.Core.Data;
 using ReportStudio.Core.Model;
 using ReportStudio.Core.Samples;
+using ReportStudio.Core.Server;
+using ReportStudio.Core.Ui;
 using ReportStudio.Core.Wizard;
 using ReportStudio.UI;
 
@@ -26,8 +28,6 @@ internal sealed class MainForm : Form
     /// <summary>The folder of the open report file (null for a report not yet saved): a data file named without a folder is looked up here.</summary>
     private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
 
-    /// <summary>The folder of the open report file (null for a report not yet saved): a data file named without a folder is looked up here.</summary>
-    ///private string? ReportFolder => _path == null ? null : Path.GetDirectoryName(_path);
     private bool _dirty;
     private bool _dbTrusted = true;
     private Dictionary<string, string?> _lastParameters = new();
@@ -58,6 +58,8 @@ internal sealed class MainForm : Form
 
         FormClosing += (_, e) => { if (!ConfirmDiscard()) e.Cancel = true; };
 
+        DesignerUi.Apply(this, translateTitle: false);   // colour theme and language (requirement 47); the title shows the file name
+
         if (fileToOpen != null && File.Exists(fileToOpen)) OpenFile(fileToOpen);
         else LoadDefinition(_def, null);
     }
@@ -78,6 +80,8 @@ internal sealed class MainForm : Form
             Item("&Open…", Keys.Control | Keys.O, (_, _) => OpenWithDialog()),
             Item("&Save", Keys.Control | Keys.S, (_, _) => Save(false)),
             Item("Save &as…", Keys.Control | Keys.Shift | Keys.S, (_, _) => Save(true)),
+            Item("Save with &note…", Keys.None, (_, _) => SaveWithNote()),
+            Item("&Version history…", Keys.None, (_, _) => ShowVersionHistory()),
             Item("Save as te&mplate…", Keys.None, (_, _) => SaveAsTemplate()),
             new ToolStripSeparator(),
             Item("E&xit", Keys.None, (_, _) => Close())
@@ -112,10 +116,17 @@ internal sealed class MainForm : Form
             Item("&Paste format\tCtrl+Shift+V", Keys.None, (_, _) => _canvas.PasteFormat())
         });
 
+        var themeMenu = new ToolStripMenuItem("Apply style &theme");
+        foreach (var theme in StyleThemes.All)
+            themeMenu.DropDownItems.Add(Item($"{theme.Name} — {theme.Description}", Keys.None, (_, _) => ApplyTheme(theme)));
+
         var report = new ToolStripMenuItem("&Report");
         report.DropDownItems.AddRange(new ToolStripItem[]
         {
             Item("Report &settings (data, parameters, groups, page)…", Keys.None, (_, _) => EditSettings()),
+            Item("New &style from selected element…", Keys.None, (_, _) => NewStyleFromSelection()),
+            themeMenu,
+            new ToolStripSeparator(),
             Item("&Preview", Keys.F5, (_, _) => { _tabs.SelectedIndex = 1; RunPreview(forcePrompt: true); }),
             Item("&Live data on the design", Keys.None, (_, _) => ToggleLiveData()),
             Item("Back to &design", Keys.F6, (_, _) => _tabs.SelectedIndex = 0)
@@ -124,9 +135,142 @@ internal sealed class MainForm : Form
         var help = new ToolStripMenuItem("&Help");
         help.DropDownItems.Add(Item("Expression &reference", Keys.F1, (_, _) => ShowHelp()));
 
-        menu.Items.AddRange(new ToolStripItem[] { file, edit, arrange, report, help });
+        menu.Items.AddRange(new ToolStripItem[] { file, edit, arrange, report, BuildViewMenu(), help });
         MainMenuStrip = menu;
         Controls.Add(menu);
+    }
+
+    // ---- colour theme and language (requirement 47) ----
+
+    private ToolStripMenuItem BuildViewMenu()
+    {
+        var view = new ToolStripMenuItem("&View");
+
+        var theme = new ToolStripMenuItem("&Colour theme");
+        var themeItems = new Dictionary<string, ToolStripMenuItem>();
+        foreach (var (key, label) in new[]
+                 {
+                     (DesignerSettings.ThemeSystem, "Same as &Windows"),
+                     (DesignerSettings.ThemeLight, "&Light"),
+                     (DesignerSettings.ThemeDark, "&Dark")
+                 })
+        {
+            var chosen = key;
+            var entry = Item(label, Keys.None, (_, _) => DesignerUi.SetTheme(chosen));
+            themeItems[key] = entry;
+            theme.DropDownItems.Add(entry);
+        }
+        theme.DropDownOpening += (_, _) =>
+        {
+            var current = DesignerSettings.NormalizeTheme(DesignerUi.Settings.Theme);
+            foreach (var (key, entry) in themeItems) entry.Checked = key == current;
+        };
+
+        var language = new ToolStripMenuItem("&Language");
+        language.DropDownItems.Add(new ToolStripMenuItem("English"));   // so the arrow shows before the list is filled
+        language.DropDownOpening += (_, _) => FillLanguageMenu(language);
+
+        var ribbon = new ToolStripMenuItem("&Ribbon tabs") { CheckOnClick = true, Checked = DesignerUi.Settings.Ribbon };
+        ribbon.CheckedChanged += (_, _) => SetRibbon(ribbon.Checked);
+
+        view.DropDownItems.AddRange(new ToolStripItem[] { theme, language, new ToolStripSeparator(), ribbon });
+        return view;
+    }
+
+    private void FillLanguageMenu(ToolStripMenuItem menu)
+    {
+        menu.DropDownItems.Clear();
+        foreach (var language in DesignerUi.Languages)
+        {
+            var code = language.Code;
+            var entry = Item(language.Name, Keys.None, (_, _) => DesignerUi.SetLanguage(code));
+            entry.Tag = DesignerUi.NoTranslate;   // a language is shown by its own name
+            entry.Checked = string.Equals(code, DesignerUi.Language.Code, StringComparison.OrdinalIgnoreCase);
+            menu.DropDownItems.Add(entry);
+        }
+        menu.DropDownItems.Add(new ToolStripSeparator());
+        menu.DropDownItems.Add(Item("Open the &languages folder", Keys.None, (_, _) => OpenLanguageFolder()));
+        menu.DropDownItems.Add(Item("&Export a file for translators…", Keys.None, (_, _) => ExportLanguageFile()));
+        menu.DropDownItems.Add(Item("&Check the current language", Keys.None, (_, _) => CheckLanguage()));
+        DesignerUi.Apply(menu.DropDown);
+    }
+
+    private void OpenLanguageFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(DesignerSettings.LanguageFolder);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = DesignerSettings.LanguageFolder,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+        {
+            MessageBox.Show(this, "The languages folder could not be opened: " + ex.Message + Environment.NewLine + DesignerSettings.LanguageFolder,
+                "Languages", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    /// <summary>
+    /// Writes a language file with every text of the windows shown so far in this run and an empty translation for each, for a translator
+    /// to fill in. A language that is installed already keeps its translations.
+    /// </summary>
+    private void ExportLanguageFile()
+    {
+        using var askCode = new NamePromptDialog("Export a file for translators", "Language code (for example hi or pt-BR):",
+            DesignerUi.Language.Code == UiLanguage.English.Code ? "" : DesignerUi.Language.Code);
+        if (askCode.ShowDialog(this) != DialogResult.OK) return;
+        var code = askCode.EnteredText().Trim();
+        if (!UiLanguage.IsValidCode(code) || string.Equals(code, UiLanguage.English.Code, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this, "Write the language code as two or three letters, for example hi, or pt-BR. English (en) is built in.",
+                "Export a file for translators", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var existing = DesignerUi.Languages.FirstOrDefault(l => string.Equals(l.Code, code, StringComparison.OrdinalIgnoreCase));
+        using var askName = new NamePromptDialog("Export a file for translators", "Language name, as its speakers write it:", existing?.Name ?? "");
+        if (askName.ShowDialog(this) != DialogResult.OK) return;
+        var name = askName.EnteredText().Trim();
+
+        try
+        {
+            Directory.CreateDirectory(DesignerSettings.LanguageFolder);
+            using var save = new SaveFileDialog
+            {
+                InitialDirectory = DesignerSettings.LanguageFolder,
+                FileName = code + ".json",
+                Filter = "Language file (*.json)|*.json",
+                OverwritePrompt = true
+            };
+            if (save.ShowDialog(this) != DialogResult.OK) return;
+            File.WriteAllText(save.FileName, UiLanguage.TemplateJson(code, name.Length == 0 ? code : name, DesignerUi.SeenTexts, existing));
+            _status.Text = $"Wrote {DesignerUi.SeenTexts.Count} texts to {save.FileName}. Fill in the translations, keep it in the languages folder, then choose the language in View > Language.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MessageBox.Show(this, "The file could not be written: " + ex.Message, "Export a file for translators", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+    }
+
+    private void CheckLanguage()
+    {
+        var language = DesignerUi.Language;
+        if (language.Code == UiLanguage.English.Code)
+        {
+            MessageBox.Show(this, "English is built in and has nothing to check. Choose another language first.", "Languages",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        var seen = DesignerUi.SeenTexts;
+        var problems = language.Problems(seen);
+        int done = seen.Count(t => language.Texts.ContainsKey(t));
+        var text = $"{language.Name}: {done} of the {seen.Count} texts of the windows shown so far are translated (open the dialogs to include theirs)." +
+                   (problems.Count == 0 ? Environment.NewLine + "No problems found." : Environment.NewLine + Environment.NewLine + string.Join(Environment.NewLine, problems.Take(15)));
+        MessageBox.Show(this, text, "Languages", MessageBoxButtons.OK, problems.Count == 0 ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
     }
 
     private void BuildToolbar()
@@ -202,7 +346,23 @@ internal sealed class MainForm : Form
         bar.Items.Add(_nextRow);
         bar.Items.Add(Button("▶ Preview", (_, _) => { _tabs.SelectedIndex = 1; RunPreview(forcePrompt: true); }, FontStyle.Bold));
 
+        // Cut the toolbar into groups at its separators (a separator belongs to the group before it), for the ribbon tabs.
+        _bar = bar;
+        int group = 0;
+        foreach (ToolStripItem item in bar.Items)
+        {
+            _barGroup[item] = group;
+            if (item is ToolStripSeparator) group++;
+        }
+
         Controls.Add(bar);
+
+        // The ribbon tabs sit above the toolbar and below the menu (the menu is added later, so it docks first).
+        _ribbonTabs = new TabControl { Dock = DockStyle.Top, Height = 28, Visible = DesignerUi.Settings.Ribbon, Padding = new Point(14, 4) };
+        foreach (var name in RibbonNames) _ribbonTabs.TabPages.Add(name);
+        _ribbonTabs.SelectedIndexChanged += (_, _) => ApplyRibbon();
+        Controls.Add(_ribbonTabs);
+        ApplyRibbon();
     }
 
     private void BuildBody()
@@ -383,7 +543,7 @@ internal sealed class MainForm : Form
         }
     }
 
-    private bool Save(bool saveAs)
+    private bool Save(bool saveAs, string? note = null)
     {
         var path = _path;
         if (saveAs || path == null)
@@ -401,13 +561,67 @@ internal sealed class MainForm : Form
             _def.Save(path);
             _path = path;
             SetDirty(false);
-            _status.Text = "Saved " + path;
+            _status.Text = "Saved " + path + KeepVersion(path, note);
             return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             MessageBox.Show(this, "Could not save:\n" + ex.Message, "Save", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
+        }
+    }
+
+    /// <summary>Keeps the saved file as a version in the ".history" folder beside it (requirement 51b). A failure here never fails the save.</summary>
+    private static string KeepVersion(string path, string? note)
+    {
+        var folder = Path.GetDirectoryName(path);
+        var id = Path.GetFileNameWithoutExtension(path);
+        if (folder == null || !ReportHistory.IsValidId(id)) return " (no version kept: the file name is not usable as a history name)";
+        try
+        {
+            var version = new ReportHistory(Path.Combine(folder, ".history")).Record(id, File.ReadAllText(path), Environment.UserName, note);
+            return " (version " + version.Number + ")";
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            return " (no version kept: " + ex.Message + ")";
+        }
+    }
+
+    private void SaveWithNote()
+    {
+        using var ask = new NamePromptDialog("Save with note", "What did you change?");
+        if (ask.ShowDialog(this) != DialogResult.OK) return;
+        Save(false, ask.EnteredText());
+    }
+
+    private void ShowVersionHistory()
+    {
+        var folder = _path == null ? null : Path.GetDirectoryName(_path);
+        var id = _path == null ? "" : Path.GetFileNameWithoutExtension(_path);
+        if (folder == null || !ReportHistory.IsValidId(id))
+        {
+            MessageBox.Show(this, "Save the report first. A version is kept every time a saved report is saved again.",
+                "Version history", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var dlg = new VersionHistoryDialog(new ReportHistory(Path.Combine(folder, ".history")), id);
+        if (dlg.ShowDialog(this) != DialogResult.OK || dlg.RestoredText == null) return;
+
+        if (_dirty && MessageBox.Show(this, "The changes you have not saved will be replaced by the chosen version. Continue?",
+                "Version history", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        try
+        {
+            LoadDefinition(ReportDefinition.FromJson(dlg.RestoredText), _path);   // opened like a file: a query in it must be confirmed again
+            SetDirty(true);
+            _status.Text = "Restored an older version. Save to keep it as a new version.";
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException or ArgumentException)
+        {
+            MessageBox.Show(this, "That version could not be opened:\n" + ex.Message, "Version history", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -483,6 +697,7 @@ internal sealed class MainForm : Form
         ExpressionEditorContext.Fields = _fields.Items.Cast<object>().Select(o => o.ToString() ?? "")
             .Where(s => s.Length > 0 && !s.Contains('(') && s is not ("Page" or "PageCount" or "Now" or "RowNumber")).ToList();
         ExpressionEditorContext.Variables = _def.Variables.Select(v => v.Name).ToList();
+        StyleEditorContext.Names = () => _def.Styles.Select(s => s.Name?.Trim() ?? "").Where(n => n.Length > 0).ToList();   // the Style list of the property grid
     }
 
     private void InsertSelectedField()
@@ -520,6 +735,55 @@ internal sealed class MainForm : Form
         }
     }
 
+    /// <summary>Puts the styles of a theme into the report: same-named styles are replaced, the others stay, elements are not touched.</summary>
+    private void ApplyTheme(StyleTheme theme)
+    {
+        var existing = StyleThemes.StandardNames.Count(n => StyleResolver.Find(_def, n) != null);
+        if (existing > 0 && MessageBox.Show(this,
+                $"The {theme.Name} theme replaces {existing} style(s) of the same names in this report (Title, Heading, Body and so on). " +
+                "Your own styles with other names stay. Continue?", "Apply style theme",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+        int changed = StyleThemes.Apply(_def, theme);
+        _canvas.NotifyChanged();
+        SetDirty(true);
+        _status.Text = $"{theme.Name} theme: {changed} styles added or replaced. Pick them in an element's Style property.";
+    }
+
+    /// <summary>Makes a style from the look of the selected element and gives that element the style.</summary>
+    private void NewStyleFromSelection()
+    {
+        var item = _canvas.Selection.FirstOrDefault();
+        if (item == null)
+        {
+            MessageBox.Show(this, "Select the element whose look you want to keep as a style, then try again.", "New style",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+
+        using var ask = new NamePromptDialog("New style", "Style name:", item.Style);
+        if (ask.ShowDialog(this) != DialogResult.OK) return;
+        var name = ask.EnteredText().Trim();
+        if (name.Length == 0) return;
+
+        var style = StyleResolver.FromItem(StyleResolver.LookOf(_def, item), name);
+        var old = StyleResolver.Find(_def, name);
+        if (old != null)
+        {
+            if (MessageBox.Show(this, $"A style called '{old.Name}' exists already. Replace it? Elements that use it will change.", "New style",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            style.Parent = old.Parent;
+            _def.Styles[_def.Styles.IndexOf(old)] = style;
+        }
+        else _def.Styles.Add(style);
+
+        item.Style = style.Name;
+        _canvas.NotifyChanged();
+        SetDirty(true);
+        OnSelectionChanged();
+        _status.Text = $"Style '{style.Name}' saved and given to the element.";
+    }
+
     private void EditSettings()
     {
         using var dlg = new ReportSettingsDialog(_def, ReportFolder);
@@ -534,6 +798,39 @@ internal sealed class MainForm : Form
 
     private ToolStripButton? _liveData;
     private ToolStripButton? _nextRow;
+
+    // ---- ribbon tabs (requirement 47b): the toolbar is cut into groups at its separators and a tab shows some of the groups ----
+    private ToolStrip? _bar;
+    private TabControl? _ribbonTabs;
+    private readonly Dictionary<ToolStripItem, int> _barGroup = new();
+    private bool _nextRowWanted;
+    private static readonly string[] RibbonNames = { "Home", "Insert", "Format", "View" };
+    // Toolbar groups: 0 Open/Save, 1 Undo/Redo, 2 Insert tools, 3 Bold/Italic/Underline/alignment, 4 Align/Snap/Ruler/Zoom, 5 Settings/Live data/Preview
+    private static readonly int[][] RibbonGroups = { new[] { 0, 1, 5 }, new[] { 2 }, new[] { 3 }, new[] { 4 } };
+
+    private void SetRibbon(bool on)
+    {
+        if (_ribbonTabs == null) return;
+        _ribbonTabs.Visible = on;
+        DesignerUi.Settings.Ribbon = on;
+        DesignerUi.Settings.Save();
+        ApplyRibbon();
+    }
+
+    /// <summary>Shows the toolbar items of the selected tab (all of them when the ribbon is off).</summary>
+    private void ApplyRibbon()
+    {
+        if (_bar == null || _ribbonTabs == null) return;
+        var shown = _ribbonTabs.Visible ? RibbonGroups[Math.Clamp(_ribbonTabs.SelectedIndex, 0, RibbonGroups.Length - 1)] : null;
+
+        foreach (var (item, group) in _barGroup)
+        {
+            if (item == _nextRow) continue;   // shown only while live data has more than one row
+            item.Visible = shown == null || shown.Contains(group);
+        }
+        if (_nextRow != null && _barGroup.TryGetValue(_nextRow, out var nextGroup))
+            _nextRow.Visible = _nextRowWanted && (shown == null || shown.Contains(nextGroup));
+    }
 
     /// <summary>Shows real rows on the design canvas (or back to {Field} placeholders).</summary>
     private void ToggleLiveData()
@@ -574,7 +871,8 @@ internal sealed class MainForm : Form
     {
         _canvas.Preview = preview;
         if (_nextRow == null || _liveData == null) return;   // the toolbar is not built yet
-        _nextRow.Visible = preview != null && preview.RowCount > 1;
+        _nextRowWanted = preview != null && preview.RowCount > 1;
+        ApplyRibbon();
         _liveData.Checked = preview != null;
         UpdateLiveDataText();
     }

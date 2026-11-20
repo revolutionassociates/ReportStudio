@@ -1,5 +1,6 @@
 using System.Text;
 using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Options;
 using ReportStudio.Data;
 using ReportStudio.Export;
 using ReportStudio.Web;
@@ -9,6 +10,15 @@ builder.Services.Configure<WebViewerOptions>(builder.Configuration.GetSection("R
 builder.Services.AddSingleton<ReportCatalog>();
 builder.Services.AddSingleton(_ => new WebTextMeasurer());
 builder.Services.AddSingleton<ReportService>();
+
+// Requirement 50: scheduled reports by e-mail. Off until ReportStudio:Server:Enabled is set.
+builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection("ReportStudio:Server"));
+builder.Services.ConfigureHttpJsonOptions(o => o.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton(sp => new SubscriptionStore(sp.GetRequiredService<IOptions<ServerOptions>>().Value.SubscriptionsFile, sp.GetRequiredService<TimeProvider>()));
+builder.Services.AddSingleton<IMailSender, SmtpMailSender>();
+builder.Services.AddSingleton<SubscriptionRunner>();
+builder.Services.AddHostedService<SchedulerService>();
 
 DatabaseLoader.Register();   // only used for reports the server's owner has chosen to trust (ReportStudio:TrustReportQueries)
 
@@ -81,6 +91,8 @@ app.MapGet("/r/{id}/download/{format}", async (string id, string format, HttpReq
     if (file.Bytes == null) return Problem(new ReportView(RunStatus.Failed, file.Message));
     return Results.File(file.Bytes, chosen.ContentType, id + "." + chosen.Extension);
 });
+
+app.MapAdminApi();
 
 app.Run();
 
