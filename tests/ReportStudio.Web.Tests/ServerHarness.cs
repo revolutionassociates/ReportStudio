@@ -42,7 +42,7 @@ internal sealed class ServerHarness : IDisposable
     public TestClock Clock { get; } = new();
     public WebApplicationFactory<Program> Factory { get; }
 
-    public ServerHarness(Action<ServerOptions>? tweak = null)
+    public ServerHarness(Action<ServerOptions>? tweak = null, Action<AccessOptions>? access = null)
     {
         SampleReport.Create().Save(Path.Combine(Dir, "sales.rsr"));
 
@@ -61,6 +61,7 @@ internal sealed class ServerHarness : IDisposable
                     o.Smtp.From = "reports@example.com";
                     tweak?.Invoke(o);
                 });
+                services.Configure<AccessOptions>(o => access?.Invoke(o));
                 services.RemoveAll<IMailSender>();
                 services.AddSingleton<IMailSender>(Mail);
                 services.RemoveAll<TimeProvider>();

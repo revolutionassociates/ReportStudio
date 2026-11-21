@@ -93,17 +93,31 @@ public static class AdminApi
         }
 
         var options = http.RequestServices.GetRequiredService<IOptions<ServerOptions>>().Value;
+        var access = http.RequestServices.GetRequiredService<AccessService>();
         http.Response.Headers.CacheControl = "no-store";
 
-        if (!options.AdminEnabled)
+        // Open to scripts that hold the admin key, and to signed-in users whose role is Admin (requirement 51c).
+        if (!options.Enabled || !(options.AdminEnabled || access.Enabled))
         {
             http.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
         }
-        if (!KeyMatches(http.Request.Headers[KeyHeader].ToString(), options.AdminKey))
+
+        bool keyOk = options.AdminEnabled && KeyMatches(http.Request.Headers[KeyHeader].ToString(), options.AdminKey);
+        if (!keyOk)
         {
-            await Results.Json(Error("The admin key is missing or wrong."), statusCode: 401).ExecuteAsync(http);
-            return;
+            var check = access.Enabled ? access.Check(http) : new AccessCheck(null, false);
+            if (check.Blocked)
+            {
+                http.Response.Headers.RetryAfter = access.LockoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                await Results.Json(Error("Too many wrong passwords. Try again later."), statusCode: 429).ExecuteAsync(http);
+                return;
+            }
+            if (check.User == null || !AccessPolicy.IsAdmin(check.User))
+            {
+                await Results.Json(Error("The admin key is missing or wrong, or the user is not an administrator."), statusCode: 401).ExecuteAsync(http);
+                return;
+            }
         }
         if (http.Request.ContentLength > MaxBodyBytes)
         {

@@ -45,8 +45,11 @@ public static class EmailAddress
     }
 
     /// <summary>The domain of a valid address in lower case, or null.</summary>
-    public static string? Domain(string? address) =>
-        IsValid(address) ? address![(address.IndexOf('@') + 1)..].ToLowerInvariant() : null;
+    public static string? Domain(string? address)
+    {
+        if (address == null || !IsValid(address)) return null;
+        return address[(address.IndexOf('@') + 1)..].ToLowerInvariant();
+    }
 
     /// <summary>
     /// True when the address is at one of the allowed domains or at a sub-domain of one ("example.com" allows "a@mail.example.com").

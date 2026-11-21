@@ -1,15 +1,35 @@
 using System.Text;
+using ReportStudio.Core.Server;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Options;
 using ReportStudio.Data;
 using ReportStudio.Export;
 using ReportStudio.Web;
 
+// reportstudio-web --hash-password [password]: prints the hash to put in ReportStudio:Access:Users (the password is read from the
+// standard input when it is not given, which keeps it out of the shell's history).
+if (args.Length >= 1 && args[0] == "--hash-password")
+{
+    var typed = args.Length >= 2 ? args[1] : Console.In.ReadLine();
+    if (string.IsNullOrEmpty(typed) || typed.Length > PasswordHash.MaxPasswordChars)
+    {
+        Console.Error.WriteLine($"Give a password of 1 to {PasswordHash.MaxPasswordChars} characters.");
+        Environment.ExitCode = 2;
+        return;
+    }
+    Console.WriteLine(PasswordHash.Create(typed));
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<WebViewerOptions>(builder.Configuration.GetSection("ReportStudio"));
 builder.Services.AddSingleton<ReportCatalog>();
 builder.Services.AddSingleton(_ => new WebTextMeasurer());
 builder.Services.AddSingleton<ReportService>();
+
+// Requirement 51c: users and roles. With no users listed the viewer is open.
+builder.Services.Configure<AccessOptions>(builder.Configuration.GetSection("ReportStudio:Access"));
+builder.Services.AddSingleton<AccessService>();
 
 // Requirement 50: scheduled reports by e-mail. Off until ReportStudio:Server:Enabled is set.
 builder.Services.Configure<ServerOptions>(builder.Configuration.GetSection("ReportStudio:Server"));
@@ -36,8 +56,45 @@ app.Use(async (context, next) =>
     await next();
 });
 
+// Asked for a name and password on every address except /healthz and /admin (which has its own key or admin sign-in).
+var access = app.Services.GetRequiredService<AccessService>();   // a broken user entry stops the server here
+app.Use(async (context, next) =>
+{
+    if (!access.Enabled || context.Request.Path == "/healthz" || context.Request.Path.StartsWithSegments("/admin"))
+    {
+        await next();
+        return;
+    }
+
+    var check = access.Check(context);
+    if (check.Blocked)
+    {
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        context.Response.Headers.RetryAfter = access.LockoutSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        context.Response.ContentType = "text/plain; charset=utf-8";
+        await context.Response.WriteAsync("Too many wrong passwords. Try again later.");
+        return;
+    }
+    if (check.User == null)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.Headers.WWWAuthenticate = access.Challenge;
+        context.Response.ContentType = "text/plain; charset=utf-8";
+        await context.Response.WriteAsync("Sign in to see the reports.");
+        return;
+    }
+
+    context.Items[AccessService.UserKey] = check.User;
+    await next();
+});
+
 if (Directory.Exists(fontsFolder))
     app.UseStaticFiles(new StaticFileOptions { FileProvider = new PhysicalFileProvider(fontsFolder), RequestPath = "/fonts" });
+
+// A signed-in viewer sees only the reports the settings give them; a report they may not open is "not found", so its name is not given away.
+static bool CanOpen(HttpContext http, string id) => http.Items[AccessService.UserKey] is not AccessUser user || AccessPolicy.CanView(user, id);
+
+static IResult NoSuchReport() => Page(WebPages.Message("Not found", "There is no such report."), 404);
 
 static IResult Page(string html, int status = 200) => Results.Text(html, "text/html; charset=utf-8", Encoding.UTF8, status);
 
@@ -62,10 +119,11 @@ static Dictionary<string, string[]> ParameterValues(HttpRequest request)
 
 app.MapGet("/healthz", () => Results.Text("ok"));
 
-app.MapGet("/", (ReportCatalog catalog) => Page(WebPages.ReportList(catalog.List())));
+app.MapGet("/", (ReportCatalog catalog, HttpContext http) => Page(WebPages.ReportList(catalog.List().Where(e => CanOpen(http, e.Id)).ToList())));
 
-app.MapGet("/r/{id}", (string id, ReportService service) =>
+app.MapGet("/r/{id}", (string id, ReportService service, HttpContext http) =>
 {
+    if (!CanOpen(http, id)) return NoSuchReport();
     var view = service.Open(id);
     if (view.Status != RunStatus.Ok || view.Definition == null) return Problem(view);
     if (view.Definition.Parameters.Count == 0) return Results.Redirect("/r/" + Uri.EscapeDataString(id) + "/view");
@@ -74,6 +132,7 @@ app.MapGet("/r/{id}", (string id, ReportService service) =>
 
 app.MapGet("/r/{id}/view", async (string id, HttpRequest request, ReportService service, CancellationToken ct) =>
 {
+    if (!CanOpen(request.HttpContext, id)) return NoSuchReport();
     var view = await service.RunAsync(id, ParameterValues(request), ct);
     if (view.Status != RunStatus.Ok || view.Result == null) return Problem(view);
     return Page(WebPages.WithToolbar(HtmlExporter.Build(view.Result), id, view.Result, fontsFolder, request.QueryString.Value ?? ""));
@@ -81,6 +140,7 @@ app.MapGet("/r/{id}/view", async (string id, HttpRequest request, ReportService 
 
 app.MapGet("/r/{id}/download/{format}", async (string id, string format, HttpRequest request, ReportService service, CancellationToken ct) =>
 {
+    if (!CanOpen(request.HttpContext, id)) return NoSuchReport();
     var chosen = ReportDownloads.Find(format);
     if (chosen == null) return Problem(new ReportView(RunStatus.NotFound, "There is no such download format."));
 
